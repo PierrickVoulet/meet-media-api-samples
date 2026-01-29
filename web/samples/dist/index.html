@@ -21,70 +21,35 @@ limitations under the License.
     </script>
   <script src="bundle.js"></script>
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const rangeInput = document.getElementById('video-stream');
-      rangeInput.addEventListener('input', (event) => {
-        const newValue = event.target.value;
-        document.getElementById('video-stream-label').textContent = `Number of video streams: ${newValue}`;
-      });
-
+    document.body.onload = () => {
       const createClientButton = document.getElementById('create-client');
       createClientButton.addEventListener('click', (event) => {
-        if (!window.tokenResponse) {
-          throw new Error('You must login before creating the client');
-        }
+        createClientButton.style.visibility = 'hidden';
         const authToken = window.tokenResponse.access_token;
-        const meetingCode = document.getElementById('meeting-code').value;
-        const videoStreamCount = document.getElementById('video-stream').value;
-        const enableAudio = document.getElementById('audio-stream').checked;
-        createClient('spaces/' + meetingCode, videoStreamCount, enableAudio, authToken);
+        createClient(window.meetingId, "1", true, authToken);
+        joinMeeting();
       });
 
-      const loginButton = document.getElementById('login');
-      loginButton.addEventListener('click', (event) => {
-        const clientId = document.getElementById('client-id').value;
-        if (!clientId) {
-            throw new Error("Please input a google cloud client id before logging in");
-        }
-        const client = google.accounts.oauth2.initTokenClient({
-              client_id: clientId,
-              scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly',
-              callback: (tokenResponse) => {
-                  console.log('response');
-                  console.log(tokenResponse);
-                  window.tokenResponse = tokenResponse;
-              },
-              error_callback: (errorResponse) => {
-                  console.log('error');
-                  console.log(errorResponse);
-              },
-          });
-          window.client = client;
-          client.requestAccessToken();
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: "410393257469-pudm6oknm3v303s2s6qmvf3ko9mbq8md.apps.googleusercontent.com",
+        scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly',
+        callback: (tokenResponse) => {
+          console.log('response');
+          console.log(tokenResponse);
+          window.tokenResponse = tokenResponse;
+        },
+        error_callback: (errorResponse) => {
+          console.log('error');
+          console.log(errorResponse);
+        },
       });
-    });
+      window.client = client;
+      client.requestAccessToken();
+    };
+    initializeAddon();
   </script>
-  <label for="client-id">Client ID</label>
-  <input id="client-id">
-  <button id="login">Login</button>
-  <label for="meeting-code">Meeting Code</label>
-  <input id="meeting-code">
-  <label id="video-stream-label" for="video-stream">Number of video streams: 0</label>
-  <input id="video-stream" type="range" min="0" max="3" value="0">
-  <label for="audio-stream">Enable Audio?</label>
-  <input id="audio-stream" type="checkbox">
-  <button id="create-client">Create Client</button>
-  <p id="session-status">Session Status: New</p>
-  <button id="join-meeting" onclick="joinMeeting()">Join Meeting</button>
-  <button id="leave-meeting" onclick="leaveMeeting()">Leave Meeting</button>
+  <button id="create-client">Connect</button>
   <video id="video-1" autoplay ></video>
-  <video id="video-2" autoplay ></video>
-  <video id="video-3" autoplay ></video>
-  <video id="video-4" autoplay ></video>
-  <video id="video-5" autoplay ></video>
-  <video id="video-6" autoplay ></video>
   <audio id="audio-1" autoplay ></audio>
-  <audio id="audio-2" autoplay ></audio>
-  <audio id="audio-3" autoplay ></audio>
 </body>
 </html>

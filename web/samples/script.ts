@@ -18,6 +18,22 @@ import {MeetMediaApiClientImpl} from '../internal/meetmediaapiclient_impl';
 import {MeetConnectionState} from '../types/enums';
 import {MeetStreamTrack} from '../types/mediatypes';
 import {MeetSessionStatus} from '../types/meetmediaapiclient';
+import {meet} from '@googleworkspace/meet-addons/meet.addons';
+
+const CLOUD_PROJECT_NUMBER = 'YOUR_PROJECT_ID';
+
+/**
+ * Prepares the Add-on Side Panel Client, and adds an event to launch the
+ * activity in the main stage when the main button is clicked.
+ */
+export async function initializeAddon() {
+  const session = await meet.addon.createAddonSession({
+    cloudProjectNumber: CLOUD_PROJECT_NUMBER
+  });
+  const sidePanelClient = await session.createSidePanelClient();
+  const meetingInfo = await sidePanelClient.getMeetingInfo();
+  (window as any).meetingId = meetingInfo.meetingId;
+}
 
 // Function maps session status to strings. If the session is joined, we go
 // ahead and request a layout.
@@ -47,8 +63,8 @@ async function handleSessionChange(status: MeetSessionStatus) {
     `Session Status: ${statusString}`;
 }
 
-const VIDEO_IDS = [1, 2, 3, 4, 5, 6];
-const AUDIO_IDS = [1, 2, 3];
+const VIDEO_IDS = [1];
+const AUDIO_IDS = [1];
 
 let availableVideoIds = [...VIDEO_IDS];
 let availableAudioIds = [...AUDIO_IDS];
