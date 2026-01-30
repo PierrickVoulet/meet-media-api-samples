@@ -22,34 +22,12 @@ limitations under the License.
   <script src="https://accounts.google.com/gsi/client" async>
   </script>
   <script src="bundle.js"></script>
-  <script>
-    document.body.onload = () => {
-      const createClientButton = document.getElementById('create-client');
-      createClientButton.addEventListener('click', (event) => {
-        createClientButton.style.visibility = 'hidden';
-        const authToken = window.tokenResponse.access_token;
-        createClient(window.meetingId, "1", true, authToken);
-      });
-
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: "410393257469-pudm6oknm3v303s2s6qmvf3ko9mbq8md.apps.googleusercontent.com",
-        scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly',
-        callback: (tokenResponse) => {
-          console.log('response');
-          console.log(tokenResponse);
-          window.tokenResponse = tokenResponse;
-        },
-        error_callback: (errorResponse) => {
-          console.log('error');
-          console.log(errorResponse);
-        },
-      });
-      window.client = client;
-      client.requestAccessToken();
-    };
-    initializeAddon();
-  </script>
-  <button id="create-client">Connect</button>
+  <script>document.body.onload = () => { initializeSession() }</script>
+  <div style="display: flex; justify-content: center; align-items: center; min-height: 50vh;">
+    <button id="start-btn" onclick="this.style.display='none'; handleUserStart()"
+      style="padding: 12px 24px; font-size: 18px; cursor: pointer; border-radius: 8px; border: none; background-color: #1a73e8; color: white;">Call
+      Gemini</button>
+  </div>
   <audio id="audio-1" autoplay></audio>
   <div id="text-reply"
     style="white-space: pre-wrap; font-family: sans-serif; margin-top: 10px; border: 1px solid #ccc; padding: 10px; min-height: 50px;">

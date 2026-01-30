@@ -1,6 +1,1 @@
 runtime: nodejs24
-
-env_variables:
-  CLOUD_PROJECT_NUMBER: "410393257469"
-  GOOGLE_API_KEY: "[GOOGLE_API_KEY]"
-  DEMO_AGENT_MODEL: "gemini-2.5-flash-native-audio-preview-12-2025"

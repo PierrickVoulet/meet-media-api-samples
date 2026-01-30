@@ -2,10 +2,10 @@ const path = require('path');
 const nodeExternals = require('webpack-node-externals');
 const CopyPlugin = require("copy-webpack-plugin");
 const webpack = require("webpack");
-require("dotenv").config();
 
 const serverConfig = {
   mode: 'production',
+  context: __dirname,
   target: 'node',
   entry: './src/server.ts',
   output: {
@@ -30,6 +30,7 @@ const serverConfig = {
 
 const clientConfig = {
   mode: 'production',
+  context: __dirname,
   target: 'web',
   entry: './src/client/script.ts',
   output: {
@@ -67,10 +68,6 @@ const clientConfig = {
         { from: "src/client/pcm-recorder-processor.js", to: "pcm-recorder-processor.js" },
         { from: "src/client/pcm-player-processor.js", to: "pcm-player-processor.js" },
       ],
-    }),
-    new webpack.DefinePlugin({
-      'process.env.GOOGLE_API_KEY': JSON.stringify(process.env.GOOGLE_API_KEY),
-      'process.env.DEMO_AGENT_MODEL': JSON.stringify(process.env.DEMO_AGENT_MODEL || "gemini-2.5-flash-native-audio-preview-12-2025"),
     }),
   ],
 };

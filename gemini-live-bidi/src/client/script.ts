@@ -21,6 +21,7 @@ import { MeetStreamTrack } from './types/mediatypes';
 import { meet } from '@googleworkspace/meet-addons';
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 
+const CLIENT_ID = "410393257469-pudm6oknm3v303s2s6qmvf3ko9mbq8md.apps.googleusercontent.com";
 const CLOUD_PROJECT_NUMBER = "410393257469";
 const GOOGLE_API_KEY = "[GOOGLE_API_KEY]";
 const DEMO_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -139,23 +140,66 @@ async function initializeAudioContext() {
 
   initialized = true;
   console.log("AudioContext and Worklets initialized. State:", audioContext.state);
-
-  if (audioContext.state === 'suspended') {
-    console.log("AudioContext is suspended. Attempting to resume...");
-    await audioContext.resume();
-    console.log("AudioContext state after resume:", audioContext.state);
-  }
 }
+
+export async function handleUserStart() {
+  const meetingId = (window as any).meetingId;
+  const tokenResponse = (window as any).tokenResponse;
+
+  if (!meetingId || !tokenResponse) {
+    console.error("Session not initialized. Please wait for initialization.");
+    return;
+  }
+
+  await initializeAudioContext();
+  if (audioContext && audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+  console.log("AudioContext State after handleUserStart:", audioContext?.state);
+
+  createClient(meetingId, 1, true, tokenResponse.access_token);
+}
+
+export function initializeSession() {
+  const google = (window as any).google;
+  if (!google) {
+    console.error("Google Identity Services not loaded");
+    return;
+  }
+
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly',
+    callback: async (tokenResponse: any) => {
+      console.log('response', tokenResponse);
+      (window as any).tokenResponse = tokenResponse;
+      await initializeAddon();
+      const meetingId = (window as any).meetingId;
+      if (!meetingId) {
+        console.error("Meeting ID not found after initialization");
+        return;
+      }
+      console.log("Session initialized. Ready to join.");
+    },
+    error_callback: (errorResponse: any) => {
+      console.log('error', errorResponse);
+    },
+  });
+  (window as any).client = client;
+
+  client.requestAccessToken();
+}
+(window as any).initializeSession = initializeSession;
+(window as any).handleUserStart = handleUserStart;
 
 async function connectGemini() {
   console.log("Connecting to Gemini Live API...");
   try {
     const client = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
-    // We need to cast to any because the SDK types might be slight mismatch with beta 
     genAiSession = await client.live.connect({
       model: DEMO_AGENT_MODEL,
       config: {
-        responseModalities: [Modality.AUDIO], // We want Audio back
+        responseModalities: [Modality.AUDIO],
         systemInstruction: "You are a helpful and friendly AI assistant.",
         outputAudioTranscription: {},
       },
@@ -264,19 +308,15 @@ function setupAudioProcessing(track: MediaStreamTrack) {
   const gainNode = audioContext.createGain();
   gainNode.gain.value = GAIN_FACTOR;
 
+
+
   const recorderWorklet = new AudioWorkletNode(audioContext, 'pcm-recorder-processor');
 
-  // WORKAROUND: In some browsers, WebAudio won't pull data from a MediaStreamTrack
-  // unless it is also attached to an HTMLMediaElement that is playing.
-  // We attach it to a dummy audio element and mute it to prevent local echo.
-  const dummyAudio = new Audio();
-  dummyAudio.srcObject = new MediaStream([track]);
-  dummyAudio.muted = true;
-  dummyAudio.autoplay = true;
-  dummyAudio.play().catch(e => console.log("Dummy audio play error", e));
-  // Store it so it doesn't get garbage collected immediately (optional, but safe)
-  (window as any)._dummyAudios = (window as any)._dummyAudios || [];
-  (window as any)._dummyAudios.push(dummyAudio);
+  // WORKAROUND REPLACEMENT: Connect source to destination via zero-gain to force processing
+  // This avoids "NotAllowedError" with dummyAudio.play() in strict autoplay environments
+  const keepAliveGain = audioContext.createGain();
+  keepAliveGain.gain.value = 0; // Mute
+  source.connect(keepAliveGain).connect(audioContext.destination);
 
   recorderWorklet.port.onmessage = (event) => {
     // Event data is Float32Array from Worklet
