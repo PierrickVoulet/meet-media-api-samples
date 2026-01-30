@@ -104,16 +104,36 @@ async function initializeAudioContext() {
   if (initialized) return;
 
   // Create shared AudioContext
-  audioContext = new AudioContext({ sampleRate: 24000 }); // Try 24k as compromise or 16k
+  audioContext = new AudioContext({ sampleRate: 16000 }); // User requested 16k, and it's standard for Gemini.
   await audioContext.audioWorklet.addModule('pcm-recorder-processor.js');
   await audioContext.audioWorklet.addModule('pcm-player-processor.js');
 
   // Setup Audio Player (Gemini Output)
   audioWorkletNode = new AudioWorkletNode(audioContext, 'pcm-player-processor');
-  audioWorkletNode.connect(audioContext.destination);
+
+  // Create MediaStreamDestination to pipe audio to HTML Audio Element
+  const destination = audioContext.createMediaStreamDestination();
+  audioWorkletNode.connect(destination);
+
+  // Assign to audio element
+  const audioElement = document.getElementById('audio-1') as HTMLAudioElement;
+  if (audioElement) {
+    audioElement.srcObject = destination.stream;
+    console.log("Audio routed to <audio id='audio-1'>");
+  } else {
+    console.error("Audio element audio-1 not found!");
+    // Fallback
+    audioWorkletNode.connect(audioContext.destination);
+  }
 
   initialized = true;
-  console.log("AudioContext and Worklets initialized");
+  console.log("AudioContext and Worklets initialized. State:", audioContext.state);
+
+  if (audioContext.state === 'suspended') {
+    console.log("AudioContext is suspended. Attempting to resume...");
+    await audioContext.resume();
+    console.log("AudioContext state after resume:", audioContext.state);
+  }
 }
 
 async function connectGemini() {
@@ -210,7 +230,13 @@ function handleStreamChange(meetStreamTracks: MeetStreamTrack[]) {
 
     // Only process Audio tracks for sending to Gemini
     if (meetStreamTrack.mediaStreamTrack.kind === 'audio') {
+      const track = meetStreamTrack.mediaStreamTrack;
       console.log(`Setting up audio Processing for track ${trackId}`);
+      console.log(`Track Details - Kind: ${track.kind}, Label: ${track.label}, Muted: ${track.muted}, Enabled: ${track.enabled}, ReadyState: ${track.readyState}`);
+
+      track.onmute = () => console.log(`Track ${track.id} muted`);
+      track.onunmute = () => console.log(`Track ${track.id} unmuted`);
+
       setupAudioProcessing(meetStreamTrack.mediaStreamTrack);
     }
   });
@@ -224,6 +250,18 @@ function setupAudioProcessing(track: MediaStreamTrack) {
 
   const source = audioContext.createMediaStreamSource(new MediaStream([track]));
   const recorderWorklet = new AudioWorkletNode(audioContext, 'pcm-recorder-processor');
+
+  // WORKAROUND: In some browsers, WebAudio won't pull data from a MediaStreamTrack
+  // unless it is also attached to an HTMLMediaElement that is playing.
+  // We attach it to a dummy audio element and mute it to prevent local echo.
+  const dummyAudio = new Audio();
+  dummyAudio.srcObject = new MediaStream([track]);
+  dummyAudio.muted = true;
+  dummyAudio.autoplay = true;
+  dummyAudio.play().catch(e => console.log("Dummy audio play error", e));
+  // Store it so it doesn't get garbage collected immediately (optional, but safe)
+  (window as any)._dummyAudios = (window as any)._dummyAudios || [];
+  (window as any)._dummyAudios.push(dummyAudio);
 
   recorderWorklet.port.onmessage = (event) => {
     // Event data is Float32Array from Worklet
@@ -247,11 +285,24 @@ function sendAudioChunk(float32Data: Float32Array) {
 
   // Downsample if needed?
   // Start simple: Convert Float32 to Int16
+  let maxAmplitude = 0;
   const int16Data = new Int16Array(float32Data.length);
   for (let i = 0; i < float32Data.length; i++) {
     // Clamp to [-1, 1]
     const s = Math.max(-1, Math.min(1, float32Data[i]));
+    if (Math.abs(s) > maxAmplitude) maxAmplitude = Math.abs(s);
     int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+
+  if (maxAmplitude > 0.01) {
+    // Log occasionally or just when significant audio is detected to avoid spam, 
+    // but for now let's just log every few chunks or simply log.
+    // To avoid spamming, maybe just log if we haven't logged recently?
+    // For debugging, let's spam a little bit or use a throttle.
+    // We'll just rely on the user seeing typical logs.
+    console.log(`Sending Audio. Max Amplitude: ${maxAmplitude.toFixed(4)}`);
+  } else {
+    // console.log("Silence detected.");
   }
 
   // Convert to Base64
