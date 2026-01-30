@@ -1,5 +1,5 @@
 /**
- * Main server file for bidi-demo-ts.
+ * Main server file for gemini-live-bidi.
  * Serves static files for the Meet Add-on.
  */
 import express from "express";

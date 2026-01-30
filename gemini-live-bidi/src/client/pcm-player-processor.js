@@ -25,9 +25,9 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
       // We assume data comes as Int16Array (or similar view) from main thread
       // if main thread decodes base64 first.
       // Actually main thread sends Float32Array or Int16Array.
-      // Let's assume we send Int16Array from main thread to match original bidi-demo logic logic
-      // Wait, bidi-demo sends `new Int16Array(event.data)` where event.data is ArrayBuffer.
-      
+      // Let's assume we send Int16Array from main thread to match original logic
+      // Wait, we send `new Int16Array(event.data)` where event.data is ArrayBuffer.
+
       const int16Samples = new Int16Array(event.data);
 
       // Add the audio data to the buffer

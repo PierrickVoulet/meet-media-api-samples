@@ -1,7 +1,7 @@
 {
-  "name": "bidi-demo-ts",
+  "name": "gemini-live-bidi",
   "version": "1.0.0",
-  "description": "TypeScript implementation of ADK Bidi-streaming demo",
+  "description": "TypeScript implementation of Gemini Live API",
   "main": "dist/server.js",
   "scripts": {
     "build": "webpack --mode production",

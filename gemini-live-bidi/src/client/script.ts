@@ -18,17 +18,19 @@ import { MeetConnectionState } from './types/enums';
 import { MeetSessionStatus } from './types/meetmediaapiclient';
 import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetStreamTrack } from './types/mediatypes';
-import { meet } from '@googleworkspace/meet-addons/meet.addons';
+import { meet } from '@googleworkspace/meet-addons';
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 
 const CLOUD_PROJECT_NUMBER = "410393257469";
-const GOOGLE_API_KEY = "[ENCRYPTION_KEY]";
+const GOOGLE_API_KEY = "[GOOGLE_API_KEY]";
 const DEMO_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+const GAIN_FACTOR = 10; // Audio stream volume multiplier
 
 // Maps trackId -> AudioContext chain resources
 interface AudioChain {
   audioContext: AudioContext;
   source: MediaStreamAudioSourceNode;
+  gainNode: GainNode;
   worklet: AudioWorkletNode;
 }
 
@@ -39,6 +41,15 @@ let genAiSession: any = null;
 let audioContext: AudioContext | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
 let initialized = false;
+
+// Exported function to change gain programmatically
+export function setGain(value: number) {
+  console.log(`Setting gain to ${value}`);
+  for (const chain of trackIdToChain.values()) {
+    chain.gainNode.gain.value = value;
+  }
+}
+(window as any).setGain = setGain;
 
 /**
  * Prepares the Add-on Side Panel Client, and adds an event to launch the
@@ -104,7 +115,7 @@ async function initializeAudioContext() {
   if (initialized) return;
 
   // Create shared AudioContext
-  audioContext = new AudioContext({ sampleRate: 16000 }); // User requested 16k, and it's standard for Gemini.
+  audioContext = new AudioContext({ sampleRate: 16000 });
   await audioContext.audioWorklet.addModule('pcm-recorder-processor.js');
   await audioContext.audioWorklet.addModule('pcm-player-processor.js');
 
@@ -146,6 +157,7 @@ async function connectGemini() {
       config: {
         responseModalities: [Modality.AUDIO], // We want Audio back
         systemInstruction: "You are a helpful and friendly AI assistant.",
+        outputAudioTranscription: {},
       },
       callbacks: {
         onopen: () => {
@@ -154,19 +166,23 @@ async function connectGemini() {
         onmessage: (message: LiveServerMessage) => {
           // Check for Audio
           console.log("Received message from Gemini:", message);
-          if (message.serverContent && message.serverContent.modelTurn) {
-            const parts = message.serverContent.modelTurn.parts || [];
-            for (const part of parts) {
-              if (part.inlineData && part.inlineData.data) {
-                // Received Audio Data
-                playAudioData(part.inlineData.data);
-              }
-              if (part.text) {
-                console.log("Text:", part.text);
-                const textReply = document.getElementById('text-reply');
-                if (textReply) {
-                  textReply.textContent += part.text;
-                  textReply.scrollTop = textReply.scrollHeight;
+          if (message.serverContent) {
+            console.log("Received serverContent:", JSON.stringify(message.serverContent).substring(0, 200) + "...");
+            if (message.serverContent.modelTurn) {
+              const parts = message.serverContent.modelTurn.parts || [];
+              console.log(`Received modelTurn with ${parts.length} parts`);
+              for (const part of parts) {
+                if (part.inlineData && part.inlineData.data) {
+                  console.log("Received Audio Data chunk, length:", part.inlineData.data.length);
+                  playAudioData(part.inlineData.data);
+                }
+                if (part.text) {
+                  console.log("Received Text:", part.text);
+                  const textReply = document.getElementById('text-reply');
+                  if (textReply) {
+                    textReply.textContent += part.text;
+                    textReply.scrollTop = textReply.scrollHeight;
+                  }
                 }
               }
             }
@@ -187,6 +203,7 @@ async function connectGemini() {
 
 function playAudioData(base64Data: string) {
   if (!audioWorkletNode) return;
+  // console.log("Queueing audio data for playback...");
 
   // Convert base64 to ArrayBuffer
   const binaryString = window.atob(base64Data);
@@ -195,12 +212,6 @@ function playAudioData(base64Data: string) {
   for (let i = 0; i < len; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-
-  // The player processor expects Int16 or Float32 depending on how we implemented it.
-  // The previous implementation of `pcm-player-processor.js` (from bidi-demo) 
-  // expects the raw ArrayBuffer coming from the server (which was Int16Array).
-  // Gemini sends signed 16-bit PCM (LE) as base64.
-  // So `bytes.buffer` is accurate.
 
   // Post to worklet
   audioWorkletNode.port.postMessage(bytes.buffer);
@@ -217,6 +228,7 @@ function handleStreamChange(meetStreamTracks: MeetStreamTrack[]) {
     if (!currentTrackIds.has(trackId)) {
       console.log(`Removing track ${trackId}`);
       chain.source.disconnect();
+      chain.gainNode.disconnect();
       chain.worklet.disconnect();
       trackIdToChain.delete(trackId);
     }
@@ -249,6 +261,9 @@ function setupAudioProcessing(track: MediaStreamTrack) {
   }
 
   const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+  const gainNode = audioContext.createGain();
+  gainNode.gain.value = GAIN_FACTOR;
+
   const recorderWorklet = new AudioWorkletNode(audioContext, 'pcm-recorder-processor');
 
   // WORKAROUND: In some browsers, WebAudio won't pull data from a MediaStreamTrack
@@ -269,12 +284,14 @@ function setupAudioProcessing(track: MediaStreamTrack) {
     sendAudioChunk(inputData);
   };
 
-  source.connect(recorderWorklet);
+  source.connect(gainNode);
+  gainNode.connect(recorderWorklet);
   // Note: We don't connect recorderWorklet to destination to avoid self-hearing loop for user.
 
   trackIdToChain.set(track.id, {
     audioContext: audioContext,
     source: source,
+    gainNode: gainNode,
     worklet: recorderWorklet
   });
 }
@@ -285,24 +302,11 @@ function sendAudioChunk(float32Data: Float32Array) {
 
   // Downsample if needed?
   // Start simple: Convert Float32 to Int16
-  let maxAmplitude = 0;
   const int16Data = new Int16Array(float32Data.length);
   for (let i = 0; i < float32Data.length; i++) {
     // Clamp to [-1, 1]
     const s = Math.max(-1, Math.min(1, float32Data[i]));
-    if (Math.abs(s) > maxAmplitude) maxAmplitude = Math.abs(s);
     int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-  }
-
-  if (maxAmplitude > 0.01) {
-    // Log occasionally or just when significant audio is detected to avoid spam, 
-    // but for now let's just log every few chunks or simply log.
-    // To avoid spamming, maybe just log if we haven't logged recently?
-    // For debugging, let's spam a little bit or use a throttle.
-    // We'll just rely on the user seeing typical logs.
-    console.log(`Sending Audio. Max Amplitude: ${maxAmplitude.toFixed(4)}`);
-  } else {
-    // console.log("Silence detected.");
   }
 
   // Convert to Base64
@@ -311,7 +315,7 @@ function sendAudioChunk(float32Data: Float32Array) {
   // Send to Gemini
   genAiSession.sendRealtimeInput({
     audio: {
-      mimeType: `audio/pcm;rate=${audioContext?.sampleRate || 24000}`, // Dynamic rate
+      mimeType: `audio/pcm;rate=${audioContext?.sampleRate || 16000}`,
       data: base64
     }
   });
