@@ -1,11 +1,19 @@
 const path = require('path');
 const nodeExternals = require('webpack-node-externals');
+const CopyPlugin = require("copy-webpack-plugin");
 
 const serverConfig = {
-  name: 'server',
   mode: 'production',
-  entry: './src/server.ts',
   target: 'node',
+  entry: './src/server.ts',
+  output: {
+    filename: 'server.js',
+    path: path.resolve(__dirname, 'dist'),
+    clean: false,
+  },
+  resolve: {
+    extensions: ['.ts', '.js', '.mjs'],
+  },
   externals: [nodeExternals()],
   module: {
     rules: [
@@ -16,21 +24,31 @@ const serverConfig = {
       },
     ],
   },
-  resolve: {
-    extensions: ['.ts', '.js'],
-  },
-  output: {
-    filename: 'server.js',
-    path: path.resolve(__dirname, 'dist'),
-    clean: true,
-  },
 };
 
 const clientConfig = {
-  name: 'client',
   mode: 'production',
-  entry: './addon/samples/script.ts',
   target: 'web',
+  entry: './src/client/script.ts',
+  output: {
+    filename: 'bundle.js',
+    path: path.resolve(__dirname, 'dist/public'),
+    libraryTarget: 'window',
+    clean: false,
+  },
+  resolve: {
+    extensions: ['.ts', '.js', '.mjs'],
+    alias: {
+    },
+    fallback: {
+      "crypto": false,
+      "fs": false,
+      "path": false,
+      "os": false,
+      "net": false,
+      "tls": false
+    }
+  },
   module: {
     rules: [
       {
@@ -40,23 +58,13 @@ const clientConfig = {
       },
     ],
   },
-  resolve: {
-    extensions: ['.ts', '.js'],
-    modules: [
-      path.resolve(__dirname, 'addon'),
-      path.resolve(__dirname, 'node_modules'),
-    ],
-    alias: {
-      // Handle relative imports from script.ts which might expect to be in samples/
-      '../internal': path.resolve(__dirname, 'addon/internal'),
-      '../types': path.resolve(__dirname, 'addon/types'),
-    }
-  },
-  output: {
-    filename: 'bundle.js',
-    path: path.resolve(__dirname, 'static'),
-    libraryTarget: 'window',
-  },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: "src/client/index.html", to: "index.html" }, // copies to dist/public/index.html
+      ],
+    }),
+  ],
 };
 
 module.exports = [serverConfig, clientConfig];

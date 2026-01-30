@@ -4,3 +4,4 @@
 **/__init__.py
 **/.env
 bidi-demo
+**/dist

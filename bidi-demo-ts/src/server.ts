@@ -3,9 +3,10 @@
  */
 import express from "express";
 import http from "http";
-import { WebSocketServer, WebSocket } from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import dotenv from "dotenv";
 import { GoogleGenerativeAI, Part } from "@google/generative-ai";
+import path from "path";
 
 dotenv.config();
 
@@ -21,78 +22,99 @@ const genAI = new GoogleGenerativeAI(API_KEY || "");
 const app = express();
 const port = process.env.PORT || 8080;
 
-app.use(express.static("static"));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get("/", (req, res) => {
-  res.sendFile("index.html", { root: "static" });
+  res.sendFile("index.html", { root: "public" });
 });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/agent" });
 
 wss.on("connection", (ws: WebSocket, req) => {
-  const url = req.url || "";
-  console.log(`New connection: ${url}`);
+  console.log(`New client connection. API Key present: ${!!API_KEY} Length: ${API_KEY?.length}`);
 
-  const model = genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    systemInstruction: "You are a helpful assistant that can search the web.",
-    tools: [{ googleSearch: {} } as any],
+  const geminiWs = new WebSocket(
+    `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${API_KEY}`
+  );
+
+  geminiWs.on("open", () => {
+    console.log("Connected to Gemini");
+    console.log(`Using model: ${MODEL_NAME}`);
+    // Initial Setup Message
+    const setupMessage = {
+      setup: {
+        model: MODEL_NAME,
+        generation_config: {
+          response_modalities: ["TEXT"],
+        }
+      },
+    };
+    geminiWs.send(JSON.stringify(setupMessage));
   });
 
-  const chat = model.startChat({
-    history: [],
-    generationConfig: {
-      maxOutputTokens: 1000,
-    },
+  geminiWs.on("message", (data) => {
+  // Forward message to client
+  // We might need to parse it if we want to log or transform
+  // But for raw proxying, we can just forward
+    try {
+      const msg = JSON.parse(data.toString());
+      ws.send(JSON.stringify(msg));
+    } catch (e) {
+      console.error("Error parsing Gemini message", e);
+    }
   });
 
-  ws.on("message", async (data) => {
+  geminiWs.on("close", (code, reason) => {
+    console.log(`Gemini connection closed. Code: ${code}, Reason: ${reason.toString()}`);
+    ws.close();
+  });
+
+  geminiWs.on("error", (err) => {
+    console.error("Gemini WebSocket error:", err);
+    ws.close();
+  });
+
+  ws.on("message", (data) => {
     try {
       const message = data.toString();
-      let parts: Part[] = [];
+      const jsonMsg = JSON.parse(message);
 
-      try {
-        const jsonMsg = JSON.parse(message);
-        if (jsonMsg.type === "text") {
-          parts.push({ text: jsonMsg.text });
-        } else if (jsonMsg.type === "image" && jsonMsg.data) {
-          parts.push({
-            inlineData: {
-              mimeType: jsonMsg.mimeType || "image/jpeg",
-              data: jsonMsg.data
-            }
-          });
-        }
-      } catch (e) {
-        console.log("Received non-JSON message, treating as maybe audio or raw text", message.substring(0, 50));
-        return;
-      }
-
-      if (parts.length > 0) {
-        const result = await chat.sendMessageStream(parts);
-
-        for await (const chunk of result.stream) {
-          const chunkText = chunk.text();
-          const adkEvent = {
-            content: {
-              parts: [{ text: chunkText }]
-            }
+      if (jsonMsg.type === "audio" && jsonMsg.data) {
+        // Wrap in realtime_input
+        const realtimeInput = {
+          realtime_input: {
+            media_chunks: [
+              {
+                mime_type: jsonMsg.mimeType || "audio/webm",
+                data: jsonMsg.data,
+              },
+            ],
+          },
+        };
+        geminiWs.send(JSON.stringify(realtimeInput));
+      } else if ((jsonMsg.type === "image" || jsonMsg.type === "video") && jsonMsg.data) {
+        // Wrap in realtime_input
+        const realtimeInput = {
+          realtime_input: {
+            media_chunks: [
+              {
+                mime_type: jsonMsg.mimeType || (jsonMsg.type === 'image' ? "image/jpeg" : "video/webm"),
+                data: jsonMsg.data,
+              },
+            ],
+          },
           };
-          ws.send(JSON.stringify(adkEvent));
-        }
-
-        ws.send(JSON.stringify({ turnComplete: true }));
+        geminiWs.send(JSON.stringify(realtimeInput));
       }
-
     } catch (e) {
-      console.error("Error processing message:", e);
-      ws.send(JSON.stringify({ error: String(e) }));
+      console.error("Error processing client message:", e);
     }
   });
 
   ws.on("close", () => {
-    console.log("WebSocket closed");
+    console.log("Client connection closed");
+    geminiWs.close();
   });
 });
 
