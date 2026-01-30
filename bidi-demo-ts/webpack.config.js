@@ -64,6 +64,8 @@ const clientConfig = {
     new CopyPlugin({
       patterns: [
         { from: "src/client/index.html", to: "index.html" }, // copies to dist/public/index.html
+        { from: "src/client/pcm-recorder-processor.js", to: "pcm-recorder-processor.js" },
+        { from: "src/client/pcm-player-processor.js", to: "pcm-player-processor.js" },
       ],
     }),
     new webpack.DefinePlugin({
