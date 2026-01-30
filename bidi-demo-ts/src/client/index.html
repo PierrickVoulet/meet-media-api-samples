@@ -27,7 +27,6 @@ limitations under the License.
         createClientButton.style.visibility = 'hidden';
         const authToken = window.tokenResponse.access_token;
         createClient(window.meetingId, "1", true, authToken);
-        joinMeeting();
       });
 
       const client = google.accounts.oauth2.initTokenClient({
@@ -49,7 +48,6 @@ limitations under the License.
     initializeAddon();
   </script>
   <button id="create-client">Connect</button>
-  <div id="session-status"></div>
   <div id="text-reply"
     style="white-space: pre-wrap; font-family: sans-serif; margin-top: 10px; border: 1px solid #ccc; padding: 10px; min-height: 50px;">
   </div>

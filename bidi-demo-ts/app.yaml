@@ -1,16 +1,6 @@
-runtime: nodejs
-env: flex
-
-network:
-  session_affinity: true
-
-manual_scaling:
-  instances: 1
+runtime: nodejs24
 
 env_variables:
-  GOOGLE_API_KEY: ""
+  CLOUD_PROJECT_NUMBER: "410393257469"
+  GOOGLE_API_KEY: "[ENCRYPTION_KEY]"
   DEMO_AGENT_MODEL: "gemini-2.5-flash-native-audio-preview-12-2025"
-
-runtime_config:
-      operating_system: "ubuntu24"
-      runtime_version: "24"

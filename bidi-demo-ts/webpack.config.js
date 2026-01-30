@@ -1,6 +1,8 @@
 const path = require('path');
 const nodeExternals = require('webpack-node-externals');
 const CopyPlugin = require("copy-webpack-plugin");
+const webpack = require("webpack");
+require("dotenv").config();
 
 const serverConfig = {
   mode: 'production',
@@ -63,6 +65,10 @@ const clientConfig = {
       patterns: [
         { from: "src/client/index.html", to: "index.html" }, // copies to dist/public/index.html
       ],
+    }),
+    new webpack.DefinePlugin({
+      'process.env.GOOGLE_API_KEY': JSON.stringify(process.env.GOOGLE_API_KEY),
+      'process.env.DEMO_AGENT_MODEL': JSON.stringify(process.env.DEMO_AGENT_MODEL || "gemini-2.5-flash-native-audio-preview-12-2025"),
     }),
   ],
 };
