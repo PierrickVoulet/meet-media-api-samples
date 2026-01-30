@@ -43,15 +43,6 @@ let audioContext: AudioContext | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
 let initialized = false;
 
-// Exported function to change gain programmatically
-export function setGain(value: number) {
-  console.log(`Setting gain to ${value}`);
-  for (const chain of trackIdToChain.values()) {
-    chain.gainNode.gain.value = value;
-  }
-}
-(window as any).setGain = setGain;
-
 /**
  * Prepares the Add-on Side Panel Client, and adds an event to launch the
  * activity in the main stage when the main button is clicked.
