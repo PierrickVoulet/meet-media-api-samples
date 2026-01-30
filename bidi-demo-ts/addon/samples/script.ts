@@ -20,7 +20,7 @@ import { MeetStreamTrack } from '../types/mediatypes';
 import { MeetSessionStatus } from '../types/meetmediaapiclient';
 import { meet } from '@googleworkspace/meet-addons/meet.addons';
 
-const CLOUD_PROJECT_NUMBER = 'YOUR_PROJECT_ID';
+const CLOUD_PROJECT_NUMBER = '';
 
 /**
  * Prepares the Add-on Side Panel Client, and adds an event to launch the
