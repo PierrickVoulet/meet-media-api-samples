@@ -23,16 +23,16 @@ import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 
 const CLIENT_ID = "410393257469-pudm6oknm3v303s2s6qmvf3ko9mbq8md.apps.googleusercontent.com";
 const CLOUD_PROJECT_NUMBER = "410393257469";
-const GOOGLE_API_KEY = "[GOOGLE_API_KEY]";
-const DEMO_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
-const GAIN_FACTOR = 10; // Audio stream volume multiplier
+const GOOGLE_API_KEY = "GOOGLE_API_KEY";
+const DEMO_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025";
+
 
 // Maps trackId -> AudioContext chain resources
 interface AudioChain {
   audioContext: AudioContext;
   source: MediaStreamAudioSourceNode;
-  gainNode: GainNode;
   worklet: AudioWorkletNode;
+  delayNode: DelayNode;
 }
 
 const trackIdToChain = new Map<string, AudioChain>();
@@ -40,8 +40,66 @@ const trackIdToChain = new Map<string, AudioChain>();
 // Global Gemini Session
 let genAiSession: any = null;
 let audioContext: AudioContext | null = null;
+let mainAudioDestination: MediaStreamAudioDestinationNode | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
 let initialized = false;
+
+// Audio Visualization
+let inputAnalyser: AnalyserNode | null = null;
+let outputAnalyser: AnalyserNode | null = null;
+let animationId: number | null = null;
+
+function setupVisualizers() {
+  const canvas = document.getElementById('visualizer-canvas') as HTMLCanvasElement;
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const draw = () => {
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    // Draw Input (Red) - Left
+    const inputVol = getRMS(inputAnalyser);
+    drawSphere(ctx, width * 0.3, height / 2, inputVol, 'rgba(255, 50, 50, 0.8)', 'rgba(255, 0, 0, 0.2)');
+
+    // Draw Output (Blue) - Right
+    const outputVol = getRMS(outputAnalyser);
+    drawSphere(ctx, width * 0.7, height / 2, outputVol, 'rgba(50, 50, 255, 0.8)', 'rgba(0, 0, 255, 0.2)');
+
+    animationId = requestAnimationFrame(draw);
+  };
+  draw();
+}
+
+function getRMS(analyser: AnalyserNode | null): number {
+  if (!analyser) return 0;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  analyser.getByteTimeDomainData(dataArray);
+
+  let sum = 0;
+  for (let i = 0; i < bufferLength; i++) {
+    const x = (dataArray[i] - 128) / 128.0;
+    sum += x * x;
+  }
+  return Math.sqrt(sum / bufferLength);
+}
+
+function drawSphere(ctx: CanvasRenderingContext2D, x: number, y: number, volume: number, centerColor: string, outerColor: string) {
+  // Base radius 20, max radius 50 based on volume
+  const radius = 20 + (volume * 100);
+
+  const gradient = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius);
+  gradient.addColorStop(0, centerColor);
+  gradient.addColorStop(1, outerColor); // Fade out
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+}
 
 /**
  * Prepares the Add-on Side Panel Client, and adds an event to launch the
@@ -91,6 +149,15 @@ export async function createClient(
         break;
       case MeetConnectionState.DISCONNECTED:
         console.log('Session Status: DISCONNECTED');
+        if (genAiSession) {
+          console.log("Disconnecting Gemini Session");
+          try {
+            genAiSession.close();
+          } catch (e) {
+            console.error("Error closing Gemini session", e);
+          }
+          genAiSession = null;
+        }
         break;
       default:
         console.log('Session Status: UNKNOWN');
@@ -114,14 +181,19 @@ async function initializeAudioContext() {
   // Setup Audio Player (Gemini Output)
   audioWorkletNode = new AudioWorkletNode(audioContext, 'pcm-player-processor');
 
+  // Output Analyser
+  outputAnalyser = audioContext.createAnalyser();
+  outputAnalyser.fftSize = 256;
+  audioWorkletNode.connect(outputAnalyser);
+
   // Create MediaStreamDestination to pipe audio to HTML Audio Element
-  const destination = audioContext.createMediaStreamDestination();
-  audioWorkletNode.connect(destination);
+  mainAudioDestination = audioContext.createMediaStreamDestination();
+  outputAnalyser.connect(mainAudioDestination); // Chain: Worklet -> Analyser -> Dest
 
   // Assign to audio element
   const audioElement = document.getElementById('audio-1') as HTMLAudioElement;
   if (audioElement) {
-    audioElement.srcObject = destination.stream;
+    audioElement.srcObject = mainAudioDestination.stream;
     console.log("Audio routed to <audio id='audio-1'>");
   } else {
     console.error("Audio element audio-1 not found!");
@@ -129,8 +201,32 @@ async function initializeAudioContext() {
     audioWorkletNode.connect(audioContext.destination);
   }
 
+  // Setup Global Debug Checkbox Logic
+  const debugCheckbox = document.getElementById('debug-delay-checkbox') as HTMLInputElement;
+  if (debugCheckbox) {
+    debugCheckbox.onchange = () => {
+      const isChecked = debugCheckbox.checked;
+      console.log(`Debug Delay toggled: ${isChecked}`);
+
+      for (const chain of trackIdToChain.values()) {
+        try {
+          if (isChecked) {
+            chain.delayNode.connect(mainAudioDestination!);
+          } else {
+            chain.delayNode.disconnect(mainAudioDestination!);
+          }
+        } catch (e) {
+          // Ignore connection errors (e.g. if already connected/disconnected)
+        }
+      }
+    };
+  }
+
   initialized = true;
   console.log("AudioContext and Worklets initialized. State:", audioContext.state);
+
+  // Start Visualizers
+  setupVisualizers();
 }
 
 export async function handleUserStart() {
@@ -147,6 +243,11 @@ export async function handleUserStart() {
     await audioContext.resume();
   }
   console.log("AudioContext State after handleUserStart:", audioContext?.state);
+
+  // Ensure visualizer is running
+  if (!animationId) {
+    setupVisualizers();
+  }
 
   createClient(meetingId, 1, true, tokenResponse.access_token);
 }
@@ -191,8 +292,7 @@ async function connectGemini() {
       model: DEMO_AGENT_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: "You are a helpful and friendly AI assistant.",
-        outputAudioTranscription: {},
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } } },
       },
       callbacks: {
         onopen: () => {
@@ -215,7 +315,8 @@ async function connectGemini() {
                   console.log("Received Text:", part.text);
                   const textReply = document.getElementById('text-reply');
                   if (textReply) {
-                    textReply.textContent += part.text;
+                    (window as any).formattedText = ((window as any).formattedText || "") + part.text;
+                    textReply.innerHTML = (window as any).marked.parse((window as any).formattedText);
                     textReply.scrollTop = textReply.scrollHeight;
                   }
                 }
@@ -225,9 +326,11 @@ async function connectGemini() {
         },
         onerror: (e: ErrorEvent) => {
           console.error("Gemini Error:", e.message);
+          genAiSession = null;
         },
         onclose: (e: CloseEvent) => {
           console.log("Gemini Closed:", e.reason);
+          genAiSession = null;
         },
       },
     });
@@ -263,8 +366,8 @@ function handleStreamChange(meetStreamTracks: MeetStreamTrack[]) {
     if (!currentTrackIds.has(trackId)) {
       console.log(`Removing track ${trackId}`);
       chain.source.disconnect();
-      chain.gainNode.disconnect();
       chain.worklet.disconnect();
+      chain.delayNode.disconnect();
       trackIdToChain.delete(trackId);
     }
   }
@@ -296,18 +399,41 @@ function setupAudioProcessing(track: MediaStreamTrack) {
   }
 
   const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-  const gainNode = audioContext.createGain();
-  gainNode.gain.value = GAIN_FACTOR;
+
+  // Input Analyser
+  if (!inputAnalyser) {
+    inputAnalyser = audioContext.createAnalyser();
+    inputAnalyser.fftSize = 256;
+  }
+  source.connect(inputAnalyser);
 
 
+  // Debug Playback Path (1s delay) - Loops back the audio we send to Gemini
+  const delayNode = audioContext.createDelay(5.0);
+  delayNode.delayTime.value = 1.0;
+
+  // Connect Input -> Delay
+  source.connect(delayNode);
+
+  // Connect Delay -> Main Destination if Checked
+  const debugCheckbox = document.getElementById('debug-delay-checkbox') as HTMLInputElement;
+  if (debugCheckbox && debugCheckbox.checked && mainAudioDestination) {
+    delayNode.connect(mainAudioDestination);
+  }
 
   const recorderWorklet = new AudioWorkletNode(audioContext, 'pcm-recorder-processor');
 
-  // WORKAROUND REPLACEMENT: Connect source to destination via zero-gain to force processing
-  // This avoids "NotAllowedError" with dummyAudio.play() in strict autoplay environments
-  const keepAliveGain = audioContext.createGain();
-  keepAliveGain.gain.value = 0; // Mute
-  source.connect(keepAliveGain).connect(audioContext.destination);
+  // WORKAROUND: In some browsers, WebAudio won't pull data from a MediaStreamTrack
+  // unless it is also attached to an HTMLMediaElement that is playing.
+  // We attach it to a dummy audio element and mute it to prevent local echo.
+  const dummyAudio = new Audio();
+  dummyAudio.srcObject = new MediaStream([track]);
+  dummyAudio.muted = true;
+  dummyAudio.autoplay = true;
+  dummyAudio.play().catch(e => console.log("Dummy audio play error", e));
+  // Store it so it doesn't get garbage collected immediately (optional, but safe)
+  (window as any)._dummyAudios = (window as any)._dummyAudios || [];
+  (window as any)._dummyAudios.push(dummyAudio);
 
   recorderWorklet.port.onmessage = (event) => {
     // Event data is Float32Array from Worklet
@@ -315,15 +441,14 @@ function setupAudioProcessing(track: MediaStreamTrack) {
     sendAudioChunk(inputData);
   };
 
-  source.connect(gainNode);
-  gainNode.connect(recorderWorklet);
+  source.connect(recorderWorklet);
   // Note: We don't connect recorderWorklet to destination to avoid self-hearing loop for user.
 
   trackIdToChain.set(track.id, {
     audioContext: audioContext,
     source: source,
-    gainNode: gainNode,
-    worklet: recorderWorklet
+    worklet: recorderWorklet,
+    delayNode: delayNode
   });
 }
 
@@ -344,12 +469,17 @@ function sendAudioChunk(float32Data: Float32Array) {
   const base64 = arrayBufferToBase64(int16Data.buffer);
 
   // Send to Gemini
-  genAiSession.sendRealtimeInput({
-    audio: {
-      mimeType: `audio/pcm;rate=${audioContext?.sampleRate || 16000}`,
-      data: base64
-    }
-  });
+  try {
+    genAiSession.sendRealtimeInput({
+      audio: {
+        mimeType: `audio/pcm;rate=${audioContext?.sampleRate || 16000}`,
+        data: base64
+      }
+    });
+  } catch (e) {
+    console.log("Error sending audio chunk, session probably closed", e);
+    genAiSession = null;
+  }
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
