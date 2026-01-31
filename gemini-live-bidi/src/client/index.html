@@ -58,14 +58,10 @@ limitations under the License.
     }
   </style>
   <script>document.body.onload = () => { initializeSession() }</script>
-  <div id="visualizer-container"
-    style="display: none; justify-content: center; align-items: center; padding: 20px; flex: 1;">
-    <canvas id="visualizer-canvas" width="300" height="100"></canvas>
-  </div>
   
   <div id="start-container">
     <button id="start-btn"
-      onclick="document.getElementById('start-container').style.display='none'; document.getElementById('visualizer-container').style.display='flex'; document.getElementById('text-reply').style.display='block'; handleUserStart()"
+      onclick="document.getElementById('start-container').style.display='none'; document.getElementById('text-reply').style.display='block'; handleUserStart()"
       style="padding: 12px 24px; font-size: 18px; cursor: pointer; border-radius: 8px; border: none; background-color: #1a73e8; color: white;">Call
       Gemini</button>
   </div>

@@ -19,11 +19,11 @@ import { MeetSessionStatus } from './types/meetmediaapiclient';
 import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetStreamTrack } from './types/mediatypes';
 import { meet } from '@googleworkspace/meet-addons';
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { GoogleGenAI, LiveServerMessage, Modality, Session } from '@google/genai';
 
 const CLIENT_ID = "410393257469-pudm6oknm3v303s2s6qmvf3ko9mbq8md.apps.googleusercontent.com";
 const CLOUD_PROJECT_NUMBER = "410393257469";
-const GOOGLE_API_KEY = "GOOGLE_API_KEY";
+const GOOGLE_API_KEY = "[ENCRYPTION_KEY]";
 const DEMO_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025";
 
 
@@ -38,68 +38,11 @@ interface AudioChain {
 const trackIdToChain = new Map<string, AudioChain>();
 
 // Global Gemini Session
-let genAiSession: any = null;
+let genAiSession: Session | null = null;
 let audioContext: AudioContext | null = null;
 let mainAudioDestination: MediaStreamAudioDestinationNode | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
 let initialized = false;
-
-// Audio Visualization
-let inputAnalyser: AnalyserNode | null = null;
-let outputAnalyser: AnalyserNode | null = null;
-let animationId: number | null = null;
-
-function setupVisualizers() {
-  const canvas = document.getElementById('visualizer-canvas') as HTMLCanvasElement;
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const draw = () => {
-    const width = canvas.width;
-    const height = canvas.height;
-    ctx.clearRect(0, 0, width, height);
-
-    // Draw Input (Red) - Left
-    const inputVol = getRMS(inputAnalyser);
-    drawSphere(ctx, width * 0.3, height / 2, inputVol, 'rgba(255, 50, 50, 0.8)', 'rgba(255, 0, 0, 0.2)');
-
-    // Draw Output (Blue) - Right
-    const outputVol = getRMS(outputAnalyser);
-    drawSphere(ctx, width * 0.7, height / 2, outputVol, 'rgba(50, 50, 255, 0.8)', 'rgba(0, 0, 255, 0.2)');
-
-    animationId = requestAnimationFrame(draw);
-  };
-  draw();
-}
-
-function getRMS(analyser: AnalyserNode | null): number {
-  if (!analyser) return 0;
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  analyser.getByteTimeDomainData(dataArray);
-
-  let sum = 0;
-  for (let i = 0; i < bufferLength; i++) {
-    const x = (dataArray[i] - 128) / 128.0;
-    sum += x * x;
-  }
-  return Math.sqrt(sum / bufferLength);
-}
-
-function drawSphere(ctx: CanvasRenderingContext2D, x: number, y: number, volume: number, centerColor: string, outerColor: string) {
-  // Base radius 20, max radius 50 based on volume
-  const radius = 20 + (volume * 100);
-
-  const gradient = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius);
-  gradient.addColorStop(0, centerColor);
-  gradient.addColorStop(1, outerColor); // Fade out
-
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, 2 * Math.PI);
-  ctx.fillStyle = gradient;
-  ctx.fill();
-}
 
 /**
  * Prepares the Add-on Side Panel Client, and adds an event to launch the
@@ -181,14 +124,9 @@ async function initializeAudioContext() {
   // Setup Audio Player (Gemini Output)
   audioWorkletNode = new AudioWorkletNode(audioContext, 'pcm-player-processor');
 
-  // Output Analyser
-  outputAnalyser = audioContext.createAnalyser();
-  outputAnalyser.fftSize = 256;
-  audioWorkletNode.connect(outputAnalyser);
-
   // Create MediaStreamDestination to pipe audio to HTML Audio Element
   mainAudioDestination = audioContext.createMediaStreamDestination();
-  outputAnalyser.connect(mainAudioDestination); // Chain: Worklet -> Analyser -> Dest
+  audioWorkletNode.connect(mainAudioDestination);
 
   // Assign to audio element
   const audioElement = document.getElementById('audio-1') as HTMLAudioElement;
@@ -224,9 +162,6 @@ async function initializeAudioContext() {
 
   initialized = true;
   console.log("AudioContext and Worklets initialized. State:", audioContext.state);
-
-  // Start Visualizers
-  setupVisualizers();
 }
 
 export async function handleUserStart() {
@@ -243,11 +178,6 @@ export async function handleUserStart() {
     await audioContext.resume();
   }
   console.log("AudioContext State after handleUserStart:", audioContext?.state);
-
-  // Ensure visualizer is running
-  if (!animationId) {
-    setupVisualizers();
-  }
 
   createClient(meetingId, 1, true, tokenResponse.access_token);
 }
@@ -400,12 +330,6 @@ function setupAudioProcessing(track: MediaStreamTrack) {
 
   const source = audioContext.createMediaStreamSource(new MediaStream([track]));
 
-  // Input Analyser
-  if (!inputAnalyser) {
-    inputAnalyser = audioContext.createAnalyser();
-    inputAnalyser.fftSize = 256;
-  }
-  source.connect(inputAnalyser);
 
 
   // Debug Playback Path (1s delay) - Loops back the audio we send to Gemini
@@ -456,13 +380,11 @@ function setupAudioProcessing(track: MediaStreamTrack) {
 function sendAudioChunk(float32Data: Float32Array) {
   if (!genAiSession) return;
 
-  // Downsample if needed?
-  // Start simple: Convert Float32 to Int16
-  const int16Data = new Int16Array(float32Data.length);
-  for (let i = 0; i < float32Data.length; i++) {
-    // Clamp to [-1, 1]
-    const s = Math.max(-1, Math.min(1, float32Data[i]));
-    int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  const l = float32Data.length;
+  const int16Data = new Int16Array(l);
+  for (let i = 0; i < l; i++) {
+    // convert float32 -1 to 1 to int16 -32768 to 32767
+    int16Data[i] = float32Data[i] * 32768;
   }
 
   // Convert to Base64
@@ -472,7 +394,7 @@ function sendAudioChunk(float32Data: Float32Array) {
   try {
     genAiSession.sendRealtimeInput({
       audio: {
-        mimeType: `audio/pcm;rate=${audioContext?.sampleRate || 16000}`,
+        mimeType: 'audio/pcm;rate=16000',
         data: base64
       }
     });

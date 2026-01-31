@@ -10,8 +10,7 @@
     "dev": "ts-node src/server.ts"
   },
   "dependencies": {
-    "@google/genai": "^1.38.0",
-    "@google/generative-ai": "^0.21.0",
+    "@google/genai": "^1.15.0",
     "@googleworkspace/meet-addons": "^1.2.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
