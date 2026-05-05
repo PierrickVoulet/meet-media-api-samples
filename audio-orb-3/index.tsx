@@ -1,8 +1,10 @@
+/// <reference types="vite/client" />
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { meet } from '@googleworkspace/meet-addons';
 import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetConnectionState } from './types/enums';
+import { GoogleGenAI, Modality, Session } from '@google/genai';
 
 const CLOUD_PROJECT_NUMBER = import.meta.env.VITE_CLOUD_PROJECT_NUMBER;
 const CLIENT_ID = import.meta.env.VITE_CLIENT_ID;
@@ -24,6 +26,10 @@ export class GdmLiveAudio extends LitElement {
   private analyser: AnalyserNode | null = null;
   private dataArray: Uint8Array | null = null;
   private animationFrameId: number | null = null;
+
+  private ai: GoogleGenAI | null = null;
+  private session: Session | null = null;
+  private workletNode: AudioWorkletNode | null = null;
 
   static styles = css`
     :host {
@@ -128,10 +134,66 @@ export class GdmLiveAudio extends LitElement {
     const meetingId = (window as any).meetingId;
 
     try {
-      this.audioContext = new AudioContext();
+      // Initialize AudioContext with 16kHz for Gemini
+      this.audioContext = new AudioContext({ sampleRate: 16000 });
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 256;
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+
+      // Load AudioWorklet
+      await this.audioContext.audioWorklet.addModule('/pcm-recorder-processor.js');
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-recorder-processor');
+
+      this.workletNode.port.onmessage = (e) => {
+        const inputData = e.data; // Float32Array
+        const pcmBuffer = this.floatTo16BitPCM(inputData);
+        const base64Data = this.arrayBufferToBase64(pcmBuffer);
+
+        if (this.session) {
+          try {
+            this.session.sendRealtimeInput({
+              audio: {
+                mimeType: "audio/pcm;rate=16000",
+                data: base64Data
+              }
+            });
+            if (Math.random() < 0.01) {
+              console.log("Sent audio chunk to Gemini");
+            }
+          } catch (err) {
+            console.error("Error sending audio to Gemini:", err);
+          }
+        }
+      };
+
+      // Initialize Gemini Live
+      this.ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      const model = 'gemini-3.1-flash-live-preview';
+
+      this.session = await this.ai.live.connect({
+        model: model,
+        config: {
+          responseModalities: [Modality.AUDIO], // Default to AUDIO, but we ignore response
+        },
+        callbacks: {
+          onopen: () => {
+            console.log("Gemini Live: Session opened.");
+          },
+          onmessage: (message) => {
+            // Ignore response as requested
+            if (Math.random() < 0.01) {
+              console.log("Received message from Gemini:", message);
+            }
+          },
+          onerror: (e) => {
+            console.error("Gemini Live error:", e);
+          },
+          onclose: (e) => {
+            console.log("Gemini Live closed:", e.reason);
+            this.session = null;
+          }
+        }
+      });
 
       this.meetClient = new MeetMediaApiClientImpl({
         meetingSpaceId: meetingId,
@@ -164,6 +226,7 @@ export class GdmLiveAudio extends LitElement {
 
             const source = this.audioContext!.createMediaStreamSource(new MediaStream([track]));
             source.connect(this.analyser!);
+            source.connect(this.workletNode!); // Connect to worklet for Gemini
             this.activeTrackIds.add(track.id);
           }
         });
@@ -179,7 +242,7 @@ export class GdmLiveAudio extends LitElement {
   private startVolumeAnalysis() {
     const updateVolume = () => {
       if (this.analyser && this.dataArray) {
-        this.analyser.getByteFrequencyData(this.dataArray);
+        this.analyser.getByteFrequencyData(this.dataArray as any);
         let sum = 0;
         for (let i = 0; i < this.dataArray.length; i++) {
           sum += this.dataArray[i];
@@ -192,6 +255,27 @@ export class GdmLiveAudio extends LitElement {
     updateVolume();
   }
 
+  private floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+    for (let i = 0; i < float32Array.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, float32Array[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+  }
+
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this.animationFrameId) {
@@ -199,6 +283,9 @@ export class GdmLiveAudio extends LitElement {
     }
     if (this.audioContext) {
       this.audioContext.close();
+    }
+    if (this.session) {
+      this.session.close();
     }
     // Cleanup wakeup audio
     this.activeTrackIds.forEach(id => {
