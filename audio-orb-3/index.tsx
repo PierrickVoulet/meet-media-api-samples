@@ -16,6 +16,7 @@ export class GdmLiveAudio extends LitElement {
   @state() initialized = false;
   @state() error = '';
   @state() volume = 0;
+  @state() transcript = '';
 
   private meetClient: MeetMediaApiClientImpl | null = null;
   private isAddonInitialized = false;
@@ -30,6 +31,8 @@ export class GdmLiveAudio extends LitElement {
   private ai: GoogleGenAI | null = null;
   private session: Session | null = null;
   private workletNode: AudioWorkletNode | null = null;
+
+  private accumulatedInputData: Float32Array | null = null;
 
   static styles = css`
     :host {
@@ -80,6 +83,18 @@ export class GdmLiveAudio extends LitElement {
       height: 100%;
       background-color: #4caf50;
       transition: width 0.1s ease;
+    }
+    .transcript-area {
+      width: 90%;
+      height: 100px;
+      margin-top: 20px;
+      background-color: #222;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 5px;
+      padding: 10px;
+      font-family: monospace;
+      resize: none;
     }
   `;
 
@@ -166,6 +181,23 @@ export class GdmLiveAudio extends LitElement {
 
       this.workletNode.port.onmessage = (e) => {
         const inputData = e.data; // Float32Array
+
+        // Accumulate for transcription (approx 5 seconds at 16kHz = 80000 samples)
+        if (!this.accumulatedInputData) {
+          this.accumulatedInputData = inputData;
+        } else {
+          const newArray = new Float32Array(this.accumulatedInputData.length + inputData.length);
+          newArray.set(this.accumulatedInputData);
+          newArray.set(inputData, this.accumulatedInputData.length);
+          this.accumulatedInputData = newArray;
+        }
+
+        if (this.accumulatedInputData.length >= 80000) {
+          const dataToTranscribe = this.accumulatedInputData;
+          this.accumulatedInputData = null; // Reset buffer
+          this.transcribeInputAudio(dataToTranscribe);
+        }
+
         const pcmBuffer = this.floatTo16BitPCM(inputData);
         const base64Data = this.arrayBufferToBase64(pcmBuffer);
         
@@ -274,6 +306,70 @@ export class GdmLiveAudio extends LitElement {
     updateVolume();
   }
 
+  private async transcribeInputAudio(float32Array: Float32Array) {
+    console.log("Transcribing accumulated input audio...");
+    try {
+      const pcmBuffer = this.floatTo16BitPCM(float32Array);
+      const wavBytes = this.addWavHeader(new Uint8Array(pcmBuffer), 16000);
+      const base64Wav = this.arrayBufferToBase64(wavBytes.buffer);
+
+      if (!this.ai) return;
+
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [
+          {
+            inlineData: {
+              mimeType: 'audio/wav',
+              data: base64Wav
+            }
+          },
+          "Please provide a transcript of this audio. If it is only noise, say 'Noise'."
+        ]
+      });
+
+      console.log("--- Input Transcript ---");
+      console.log(response.text);
+      console.log('------------------------');
+
+      this.transcript = response.text || 'No transcript available';
+    } catch (e) {
+      console.error("Failed to transcribe input audio:", e);
+      this.transcript = 'Failed to transcribe audio.';
+    }
+  }
+
+  private addWavHeader(pcmData: Uint8Array, sampleRate: number): Uint8Array {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + pcmData.length, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // Channels
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // Bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, pcmData.length, true);
+
+    const wav = new Uint8Array(44 + pcmData.length);
+    wav.set(new Uint8Array(header), 0);
+    wav.set(pcmData, 44);
+
+    return wav;
+  }
+
   private async disconnect() {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
@@ -309,6 +405,7 @@ export class GdmLiveAudio extends LitElement {
     this.connected = false;
     this.connecting = false;
     this.volume = 0;
+    this.transcript = '';
   }
 
   private floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
@@ -322,7 +419,7 @@ export class GdmLiveAudio extends LitElement {
     return buffer;
   }
 
-  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+  private arrayBufferToBase64(buffer: ArrayBufferLike): string {
     let binary = '';
     const bytes = new Uint8Array(buffer);
     const len = bytes.byteLength;
@@ -349,6 +446,7 @@ export class GdmLiveAudio extends LitElement {
         <div class="volume-bar">
           <div class="volume-level" style="width: ${volumePercentage}%"></div>
         </div>
+        <textarea class="transcript-area" .value=${this.transcript} readonly placeholder="Transcription will appear here..."></textarea>
       ` : ''}
       
       ${this.error ? html`<div class="error">${this.error}</div>` : ''}
