@@ -89,7 +89,7 @@ export class GdmLiveAudio extends LitElement {
       transition: width 0.1s ease;
     }
     .transcript-area {
-      width: 90%;
+      width: 95%;
       height: 80px;
       margin-top: 10px;
       background-color: #222;
