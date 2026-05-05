@@ -18,6 +18,7 @@ export class GdmLiveAudio extends LitElement {
   @state() volume = 0;
   @state() transcript = '';
   @state() outputTranscript = '';
+  @state() sceneDescription = '';
 
   private meetClient: MeetMediaApiClientImpl | null = null;
   private isAddonInitialized = false;
@@ -41,6 +42,10 @@ export class GdmLiveAudio extends LitElement {
   
   private nextStartTime = 0;
   private sources = new Set<AudioBufferSourceNode>();
+
+  private videoEl: HTMLVideoElement | null = null;
+  private canvasEl: HTMLCanvasElement | null = null;
+  private videoIntervalId: number | null = null;
 
   static styles = css`
     :host {
@@ -111,6 +116,9 @@ export class GdmLiveAudio extends LitElement {
       margin-top: 15px;
       font-weight: bold;
       color: #aaa;
+    }
+    .hidden-video {
+      display: none;
     }
   `;
 
@@ -187,7 +195,7 @@ export class GdmLiveAudio extends LitElement {
     try {
       // Initialize AudioContexts
       this.audioContext = new AudioContext({ sampleRate: 16000 });
-      this.outputAudioContext = new AudioContext({ sampleRate: 24000 }); // Gemini output is 24kHz
+      this.outputAudioContext = new AudioContext({ sampleRate: 24000 });
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 256;
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
@@ -256,11 +264,8 @@ export class GdmLiveAudio extends LitElement {
               for (const part of parts) {
                 if (part.inlineData) {
                   const audio = part.inlineData;
-                  
-                  // Decode base64 to raw bytes
                   const pcmBytes = this.base64ToUint8Array(audio.data);
-                  
-                  // Accumulate for transcription
+
                   this.accumulatedResponseChunks.push(pcmBytes);
                   
                   if (this.responseTranscriptionTimer) {
@@ -270,18 +275,16 @@ export class GdmLiveAudio extends LitElement {
                     this.transcribeResponseAudio();
                   }, 1000);
 
-                  // Playback logic
                   this.nextStartTime = Math.max(
                     this.nextStartTime,
                     this.outputAudioContext!.currentTime,
                   );
 
-                  // Manual decode of raw PCM 16-bit (2 bytes per sample) to Float32
                   const audioBuffer = this.outputAudioContext!.createBuffer(1, pcmBytes.length / 2, 24000);
                   const channelData = audioBuffer.getChannelData(0);
                   const view = new DataView(pcmBytes.buffer);
                   for (let i = 0; i < channelData.length; i++) {
-                    channelData[i] = view.getInt16(i * 2, true) / 0x7FFF; // Convert to float
+                    channelData[i] = view.getInt16(i * 2, true) / 0x7FFF;
                   }
 
                   const source = this.outputAudioContext!.createBufferSource();
@@ -324,6 +327,10 @@ export class GdmLiveAudio extends LitElement {
           this.connected = true;
           this.connecting = false;
           this.startVolumeAnalysis();
+          
+          console.log("Applying layout to receive video...");
+          const mediaLayout = this.meetClient!.createMediaLayout({ width: 768, height: 768 });
+          this.meetClient!.applyLayout([{ mediaLayout }]).catch(e => console.error("Error applying layout:", e));
         }
       });
 
@@ -332,8 +339,7 @@ export class GdmLiveAudio extends LitElement {
           const track = meetTrack.mediaStreamTrack;
           if (track.kind === 'audio' && !this.activeTrackIds.has(track.id)) {
             console.log("Connecting audio track:", track.id);
-            
-            // Wakeup pattern
+
             const audioEl = document.createElement('audio');
             audioEl.muted = true;
             audioEl.srcObject = new MediaStream([track]);
@@ -342,8 +348,31 @@ export class GdmLiveAudio extends LitElement {
 
             const source = this.audioContext!.createMediaStreamSource(new MediaStream([track]));
             source.connect(this.analyser!);
-            source.connect(this.workletNode!); // Connect to worklet for Gemini
+            source.connect(this.workletNode!);
             this.activeTrackIds.add(track.id);
+          } else if (track.kind === 'video') {
+            console.log("Connecting video track:", track.id);
+            this.videoEl = document.createElement('video');
+            this.videoEl.srcObject = new MediaStream([track]);
+            this.videoEl.muted = true;
+            this.videoEl.setAttribute('playsinline', 'true');
+            
+            // Make it invisible but in the DOM
+            this.videoEl.style.position = 'absolute';
+            this.videoEl.style.width = '0';
+            this.videoEl.style.height = '0';
+            this.videoEl.style.opacity = '0';
+            this.videoEl.style.pointerEvents = 'none';
+            
+            this.shadowRoot!.appendChild(this.videoEl);
+            
+            this.videoEl.play().catch(e => console.error("Error playing video:", e));
+
+            this.canvasEl = document.createElement('canvas');
+            this.canvasEl.width = 768;
+            this.canvasEl.height = 768;
+
+            this.startVideoProcessing();
           }
         });
       });
@@ -352,6 +381,59 @@ export class GdmLiveAudio extends LitElement {
     } catch (e: any) {
       this.error = `Failed to connect: ${e.message || e}`;
       this.connecting = false;
+    }
+  }
+
+  private startVideoProcessing() {
+    this.videoIntervalId = window.setInterval(() => {
+      this.captureAndProcessFrame();
+    }, 5000); // Every 5 seconds
+  }
+
+  private async captureAndProcessFrame() {
+    if (!this.videoEl || !this.canvasEl || !this.session) return;
+
+    const ctx = this.canvasEl.getContext('2d');
+    if (!ctx) return;
+
+    // Draw the video frame to the canvas (resizing to 768x768)
+    ctx.drawImage(this.videoEl, 0, 0, this.canvasEl.width, this.canvasEl.height);
+
+    // Get base64 JPEG
+    const base64Data = this.canvasEl.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+    // Send to Gemini Live
+    try {
+      this.session.sendRealtimeInput({
+        video: {
+          mimeType: "image/jpeg",
+          data: base64Data
+        }
+      });
+      console.log("Sent video frame to Gemini Live");
+    } catch (e) {
+      console.error("Error sending video to Gemini Live:", e);
+    }
+
+    // Send to Description Model
+    if (!this.ai) return;
+    try {
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data
+            }
+          },
+          "Describe what is seen in this image in one or two sentences."
+        ]
+      });
+      this.sceneDescription = response.text || 'No description available';
+      console.log("Updated scene description.");
+    } catch (e) {
+      console.error("Failed to get scene description:", e);
     }
   }
 
@@ -364,7 +446,7 @@ export class GdmLiveAudio extends LitElement {
           sum += this.dataArray[i];
         }
         const average = sum / this.dataArray.length;
-        this.volume = average; // Value between 0 and 255
+        this.volume = average;
         this.animationFrameId = requestAnimationFrame(updateVolume);
       }
     };
@@ -392,11 +474,7 @@ export class GdmLiveAudio extends LitElement {
           "Please provide a transcript of this audio. If it is only noise, say 'Noise'."
         ]
       });
-      
-      console.log("--- Input Transcript ---");
-      console.log(response.text);
-      console.log('------------------------');
-      
+
       const text = response.text || '';
       this.transcript = (text.trim().toLowerCase() === 'noise' || text.trim().toLowerCase() === 'noise.') ? '' : text;
     } catch (e) {
@@ -423,13 +501,13 @@ export class GdmLiveAudio extends LitElement {
     if (this.accumulatedResponseChunks.length === 0) return;
     
     const chunks = this.accumulatedResponseChunks;
-    this.accumulatedResponseChunks = []; // Clear buffer
+    this.accumulatedResponseChunks = [];
     this.responseTranscriptionTimer = null;
     
     console.log("Transcribing accumulated response audio...");
     try {
       const pcmBytes = this.concatenateUint8Arrays(chunks);
-      const wavBytes = this.addWavHeader(pcmBytes, 24000); // Gemini output is 24kHz
+      const wavBytes = this.addWavHeader(pcmBytes, 24000);
       const base64Wav = this.arrayBufferToBase64(wavBytes.buffer);
       
       if (!this.ai) return;
@@ -446,11 +524,7 @@ export class GdmLiveAudio extends LitElement {
           "Please provide a transcript of this audio. If you cannot hear anything, say 'Silence'."
         ]
       });
-      
-      console.log("--- Output Transcript ---");
-      console.log(response.text);
-      console.log('-------------------------');
-      
+
       const text = response.text || '';
       this.outputTranscript = (text.trim().toLowerCase() === 'silence' || text.trim().toLowerCase() === 'silence.') ? '' : text;
     } catch (e) {
@@ -474,12 +548,12 @@ export class GdmLiveAudio extends LitElement {
     writeString(8, 'WAVE');
     writeString(12, 'fmt ');
     view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, 1, true); // Channels
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
     view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // Byte rate
-    view.setUint16(32, 2, true); // Block align
-    view.setUint16(34, 16, true); // Bits per sample
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
     writeString(36, 'data');
     view.setUint32(40, pcmData.length, true);
 
@@ -494,6 +568,10 @@ export class GdmLiveAudio extends LitElement {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
+    }
+    if (this.videoIntervalId) {
+      clearInterval(this.videoIntervalId);
+      this.videoIntervalId = null;
     }
     if (this.audioContext) {
       await this.audioContext.close();
@@ -515,8 +593,7 @@ export class GdmLiveAudio extends LitElement {
       }
       this.meetClient = null;
     }
-    
-    // Cleanup wakeup audio elements
+
     this.activeTrackIds.forEach(id => {
       const audioEl = (this as any)[`wakeupAudio_${id}`];
       if (audioEl) {
@@ -526,14 +603,21 @@ export class GdmLiveAudio extends LitElement {
     });
     this.activeTrackIds.clear();
 
+    if (this.videoEl) {
+      this.videoEl.srcObject = null;
+      this.videoEl.remove();
+      this.videoEl = null;
+    }
+    this.canvasEl = null;
+
     this.connected = false;
     this.connecting = false;
     this.volume = 0;
     this.transcript = '';
     this.outputTranscript = '';
+    this.sceneDescription = '';
     this.accumulatedResponseChunks = [];
-    
-    // Stop any active sources
+
     this.sources.forEach(source => source.stop());
     this.sources.clear();
     this.nextStartTime = 0;
@@ -593,6 +677,9 @@ export class GdmLiveAudio extends LitElement {
         
         <div class="label">Output Transcript:</div>
         <textarea class="transcript-area" .value=${this.outputTranscript} readonly placeholder="Output transcription will appear here..."></textarea>
+
+        <div class="label">Scene Description:</div>
+        <textarea class="transcript-area" .value=${this.sceneDescription} readonly placeholder="Scene description will appear here..."></textarea>
       ` : ''}
       
       ${this.error ? html`<div class="error">${this.error}</div>` : ''}
