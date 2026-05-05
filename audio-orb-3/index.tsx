@@ -25,6 +25,7 @@ export class GdmLiveAudio extends LitElement {
   private activeTrackIds = new Set<string>();
   
   private audioContext: AudioContext | null = null;
+  private outputAudioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private dataArray: Uint8Array | null = null;
   private animationFrameId: number | null = null;
@@ -37,14 +38,18 @@ export class GdmLiveAudio extends LitElement {
   
   private accumulatedResponseChunks: Uint8Array[] = [];
   private responseTranscriptionTimer: number | null = null;
+  
+  private nextStartTime = 0;
+  private sources = new Set<AudioBufferSourceNode>();
 
   static styles = css`
     :host {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      height: auto;
+      justify-content: flex-start;
+      height: 100%;
+      box-sizing: border-box;
       font-family: sans-serif;
       background: #121212;
       color: white;
@@ -90,7 +95,7 @@ export class GdmLiveAudio extends LitElement {
     }
     .transcript-area {
       width: 95%;
-      height: 80px;
+      flex-grow: 1;
       margin-top: 10px;
       background-color: #222;
       color: #ccc;
@@ -180,11 +185,14 @@ export class GdmLiveAudio extends LitElement {
     const meetingId = (window as any).meetingId;
 
     try {
-      // Initialize AudioContext with 16kHz for Gemini
+      // Initialize AudioContexts
       this.audioContext = new AudioContext({ sampleRate: 16000 });
+      this.outputAudioContext = new AudioContext({ sampleRate: 24000 }); // Gemini output is 24kHz
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 256;
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      
+      this.nextStartTime = this.outputAudioContext.currentTime;
 
       // Load AudioWorklet
       await this.audioContext.audioWorklet.addModule('/pcm-recorder-processor.js');
@@ -248,8 +256,12 @@ export class GdmLiveAudio extends LitElement {
               for (const part of parts) {
                 if (part.inlineData) {
                   const audio = part.inlineData;
-                  const audioBytes = this.base64ToUint8Array(audio.data);
-                  this.accumulatedResponseChunks.push(audioBytes);
+                  
+                  // Decode base64 to raw bytes
+                  const pcmBytes = this.base64ToUint8Array(audio.data);
+                  
+                  // Accumulate for transcription
+                  this.accumulatedResponseChunks.push(pcmBytes);
                   
                   if (this.responseTranscriptionTimer) {
                     clearTimeout(this.responseTranscriptionTimer);
@@ -257,6 +269,31 @@ export class GdmLiveAudio extends LitElement {
                   this.responseTranscriptionTimer = window.setTimeout(() => {
                     this.transcribeResponseAudio();
                   }, 1000);
+
+                  // Playback logic
+                  this.nextStartTime = Math.max(
+                    this.nextStartTime,
+                    this.outputAudioContext!.currentTime,
+                  );
+
+                  // Manual decode of raw PCM 16-bit (2 bytes per sample) to Float32
+                  const audioBuffer = this.outputAudioContext!.createBuffer(1, pcmBytes.length / 2, 24000);
+                  const channelData = audioBuffer.getChannelData(0);
+                  const view = new DataView(pcmBytes.buffer);
+                  for (let i = 0; i < channelData.length; i++) {
+                    channelData[i] = view.getInt16(i * 2, true) / 0x7FFF; // Convert to float
+                  }
+
+                  const source = this.outputAudioContext!.createBufferSource();
+                  source.buffer = audioBuffer;
+                  source.connect(this.outputAudioContext!.destination);
+                  source.addEventListener('ended', () => {
+                    this.sources.delete(source);
+                  });
+
+                  source.start(this.nextStartTime);
+                  this.nextStartTime = this.nextStartTime + audioBuffer.duration;
+                  this.sources.add(source);
                 }
               }
             }
@@ -360,12 +397,14 @@ export class GdmLiveAudio extends LitElement {
       console.log(response.text);
       console.log('------------------------');
       
-      this.transcript = response.text || 'No transcript available';
+      const text = response.text || '';
+      this.transcript = (text.trim().toLowerCase() === 'noise' || text.trim().toLowerCase() === 'noise.') ? '' : text;
     } catch (e) {
       console.error("Failed to transcribe input audio:", e);
       this.transcript = 'Failed to transcribe audio.';
     }
   }
+
   private concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
     let totalLength = 0;
     for (const arr of arrays) {
@@ -412,7 +451,8 @@ export class GdmLiveAudio extends LitElement {
       console.log(response.text);
       console.log('-------------------------');
       
-      this.outputTranscript = response.text || 'No transcript available';
+      const text = response.text || '';
+      this.outputTranscript = (text.trim().toLowerCase() === 'silence' || text.trim().toLowerCase() === 'silence.') ? '' : text;
     } catch (e) {
       console.error("Failed to transcribe response audio:", e);
       this.outputTranscript = 'Failed to transcribe response.';
@@ -459,6 +499,10 @@ export class GdmLiveAudio extends LitElement {
       await this.audioContext.close();
       this.audioContext = null;
     }
+    if (this.outputAudioContext) {
+      await this.outputAudioContext.close();
+      this.outputAudioContext = null;
+    }
     if (this.session) {
       this.session.close();
       this.session = null;
@@ -485,9 +529,14 @@ export class GdmLiveAudio extends LitElement {
     this.connected = false;
     this.connecting = false;
     this.volume = 0;
-    this.accumulatedResponseChunks = [];
     this.transcript = '';
     this.outputTranscript = '';
+    this.accumulatedResponseChunks = [];
+    
+    // Stop any active sources
+    this.sources.forEach(source => source.stop());
+    this.sources.clear();
+    this.nextStartTime = 0;
   }
 
   private floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
