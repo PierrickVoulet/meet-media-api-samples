@@ -35,7 +35,7 @@ export class GdmLiveAudio extends LitElement {
 
   private accumulatedInputData: Float32Array | null = null;
   
-  private accumulatedResponseAudio = '';
+  private accumulatedResponseChunks: Uint8Array[] = [];
   private responseTranscriptionTimer: number | null = null;
 
   static styles = css`
@@ -248,7 +248,8 @@ export class GdmLiveAudio extends LitElement {
               for (const part of parts) {
                 if (part.inlineData) {
                   const audio = part.inlineData;
-                  this.accumulatedResponseAudio += audio.data;
+                  const audioBytes = this.base64ToUint8Array(audio.data);
+                  this.accumulatedResponseChunks.push(audioBytes);
                   
                   if (this.responseTranscriptionTimer) {
                     clearTimeout(this.responseTranscriptionTimer);
@@ -365,17 +366,30 @@ export class GdmLiveAudio extends LitElement {
       this.transcript = 'Failed to transcribe audio.';
     }
   }
+  private concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
+    let totalLength = 0;
+    for (const arr of arrays) {
+      totalLength += arr.length;
+    }
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const arr of arrays) {
+      result.set(arr, offset);
+      offset += arr.length;
+    }
+    return result;
+  }
 
   private async transcribeResponseAudio() {
-    if (!this.accumulatedResponseAudio) return;
+    if (this.accumulatedResponseChunks.length === 0) return;
     
-    const dataToTranscribe = this.accumulatedResponseAudio;
-    this.accumulatedResponseAudio = ''; // Clear buffer
+    const chunks = this.accumulatedResponseChunks;
+    this.accumulatedResponseChunks = []; // Clear buffer
     this.responseTranscriptionTimer = null;
     
     console.log("Transcribing accumulated response audio...");
     try {
-      const pcmBytes = this.base64ToUint8Array(dataToTranscribe);
+      const pcmBytes = this.concatenateUint8Arrays(chunks);
       const wavBytes = this.addWavHeader(pcmBytes, 24000); // Gemini output is 24kHz
       const base64Wav = this.arrayBufferToBase64(wavBytes.buffer);
       
@@ -471,6 +485,7 @@ export class GdmLiveAudio extends LitElement {
     this.connected = false;
     this.connecting = false;
     this.volume = 0;
+    this.accumulatedResponseChunks = [];
     this.transcript = '';
     this.outputTranscript = '';
   }
