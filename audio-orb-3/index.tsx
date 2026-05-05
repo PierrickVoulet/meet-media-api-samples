@@ -26,7 +26,7 @@ export class GdmLiveAudio extends LitElement {
   private analyser: AnalyserNode | null = null;
   private dataArray: Uint8Array | null = null;
   private animationFrameId: number | null = null;
-
+  
   private ai: GoogleGenAI | null = null;
   private session: Session | null = null;
   private workletNode: AudioWorkletNode | null = null;
@@ -82,6 +82,26 @@ export class GdmLiveAudio extends LitElement {
       transition: width 0.1s ease;
     }
   `;
+
+  constructor() {
+    super();
+    this.unloadHandler = this.unloadHandler.bind(this);
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('unload', this.unloadHandler);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener('unload', this.unloadHandler);
+    this.disconnect();
+  }
+
+  private unloadHandler() {
+    this.disconnect();
+  }
 
   firstUpdated() {
     this.initializeSession();
@@ -148,7 +168,7 @@ export class GdmLiveAudio extends LitElement {
         const inputData = e.data; // Float32Array
         const pcmBuffer = this.floatTo16BitPCM(inputData);
         const base64Data = this.arrayBufferToBase64(pcmBuffer);
-
+        
         if (this.session) {
           try {
             this.session.sendRealtimeInput({
@@ -173,14 +193,13 @@ export class GdmLiveAudio extends LitElement {
       this.session = await this.ai.live.connect({
         model: model,
         config: {
-          responseModalities: [Modality.AUDIO], // Default to AUDIO, but we ignore response
+          responseModalities: [Modality.AUDIO],
         },
         callbacks: {
           onopen: () => {
             console.log("Gemini Live: Session opened.");
           },
           onmessage: (message) => {
-            // Ignore response as requested
             if (Math.random() < 0.01) {
               console.log("Received message from Gemini:", message);
             }
@@ -255,6 +274,43 @@ export class GdmLiveAudio extends LitElement {
     updateVolume();
   }
 
+  private async disconnect() {
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    if (this.audioContext) {
+      await this.audioContext.close();
+      this.audioContext = null;
+    }
+    if (this.session) {
+      this.session.close();
+      this.session = null;
+    }
+    if (this.meetClient) {
+      try {
+        await this.meetClient.leaveMeeting();
+      } catch (e) {
+        console.error("Error leaving meeting:", e);
+      }
+      this.meetClient = null;
+    }
+    
+    // Cleanup wakeup audio elements
+    this.activeTrackIds.forEach(id => {
+      const audioEl = (this as any)[`wakeupAudio_${id}`];
+      if (audioEl) {
+        audioEl.srcObject = null;
+        delete (this as any)[`wakeupAudio_${id}`];
+      }
+    });
+    this.activeTrackIds.clear();
+
+    this.connected = false;
+    this.connecting = false;
+    this.volume = 0;
+  }
+
   private floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
     const buffer = new ArrayBuffer(float32Array.length * 2);
     const view = new DataView(buffer);
@@ -274,26 +330,6 @@ export class GdmLiveAudio extends LitElement {
       binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-    }
-    if (this.audioContext) {
-      this.audioContext.close();
-    }
-    if (this.session) {
-      this.session.close();
-    }
-    // Cleanup wakeup audio
-    this.activeTrackIds.forEach(id => {
-      const audioEl = (this as any)[`wakeupAudio_${id}`];
-      if (audioEl) {
-        audioEl.srcObject = null;
-      }
-    });
   }
 
   render() {
