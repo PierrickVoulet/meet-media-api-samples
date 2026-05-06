@@ -3,7 +3,7 @@
 This sample project demonstrates how to integrate Google Meet with Gemini Live to create a multimodal AI agent that can participate in a meeting. The agent can listen to participants, see the meeting video, and respond in real-time with audio. It also provides live transcription and scene description in the Meet side panel.
 
 > [!NOTE]
-> The Google Meet Add-on SDK, the Meet Media API, and the Gemini Live model `gemini-3.1-flash-live-preview` are all currently in preview. You need to request access to the [Google Workspace Developer Preview Program (DPP)](https://developers.google.com/workspace/preview-program).
+> The Google Meet Add-on SDK, the Meet Media API, and the Gemini Live model `gemini-3.1-flash-live-preview` are all currently in preview. You need to request access to the [Google Workspace Developer Preview Program (DPP)](https://developers.google.com/workspace/preview).
 
 ## Design Overview
 
@@ -46,30 +46,39 @@ Follow these steps to deploy the Meet Live Agent as a Google Meet add-on.
                         run.googleapis.com \
                         cloudbuild.googleapis.com \
                         appsmarket.googleapis.com \
-                        workspaceaddons.googleapis.com
+                        appsmarket-component.googleapis.com \
+                        gsuiteaddons.googleapis.com
  ```
 
-### 2. Configure OAuth Consent Screen
+### 2. Configure OAuth
 
-Before creating the client ID, you need to configure the OAuth consent screen (branding):
+Before creating the client, you need to configure branding:
 
 1.  Go to the **APIs & Services > OAuth consent screen** page in the Google Cloud Console.
-2.  Select **Internal** for the User Type (this is sufficient for testing within your organization).
-3.  Fill in the required app information (App name, User support email, Developer contact information).
-4.  In the **Scopes** step, add the following scopes required by the Meet Media API:
-    *   `https://www.googleapis.com/auth/meetings.space.readonly`
-    *   `https://www.googleapis.com/auth/meetings.conference.media.readonly`
-5.  Complete the wizard and save.
+2.  Click **Get started**
+3.  Set **App name** to **Meet Live Agent** and **User support email** to your support email, then click **Next**.
+4.  Select **Internal** for the User Type (this is sufficient for testing within your organization), then click **Next**.
+5.  Set **Email addresses** to your support email, then click **Next**.
+6.  Review and check **I agree to the Google API Services: User Data Policy**, then click **Continue** and **Create**.
 
-### 3. Initialize OAuth 2.0 Client
+Then you need to set the data access for the OAuth:
+
+1.  Navigate to **Data Access**.
+2.  Click **Add or remove scopes**.
+3.  Under **Manually add scopes**, paste the following: `https://www.googleapis.com/auth/meetings.space.readonly https://www.googleapis.com/auth/meetings.conference.media.readonly`
+4.  Click **Add to table**, **Update** and **Save**.
+
+### 3. Create OAuth Client
 
 To allow the add-on to authenticate with the Meet Media API:
 
 1.  Go to the **APIs & Services > Credentials** page in the Google Cloud Console.
-2.  Click **Create Credentials > OAuth client ID**.
-3.  Select **Web application** as the application type.
-4.  Set a name for the credential such as `Meet Live Agent`.
-5.  Click **Create** and copy the **Client ID** to your `.env` file.
+2.  Navigate to **Clients**.
+3.  Click **+ Create client**.
+4.  Select **Web application** as the application type.
+5.  Set **Name** to `Meet Live Agent`.
+6.  Click **Create**.
+7.  Note the **Client ID**.
 
 ### 4. Configure Environment Variables
 
@@ -99,21 +108,21 @@ gcloud projects describe $(gcloud config get-value project) --format="value(proj
 
 ### 5. Deploy to Cloud Run
 
-Run the provided deployment script. This script builds the Docker image and deploys it to Cloud Run, passing the environment variables securely.
+1.  Run the provided deployment script. This script builds the Docker image and deploys it to Cloud Run, passing the environment variables securely.
 
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
+    ```bash
+    chmod +x deploy.sh
+    ./deploy.sh
+    ```
+
+2.  Once the deployment completes, the script will output the URL of your Cloud Run service, copy it.
 
 ### 6. Update OAuth Redirect URIs
 
-1.  Once the deployment completes, the script will output the URL of your Cloud Run service.
-2.  Copy this URL.
-3.  Go back to the **APIs & Services > Credentials** page in the Google Cloud Console.
-4.  Edit the OAuth client you initialized in Step 3.
-5.  Add the Cloud Run URL to the **Authorized JavaScript origins** list.
-6.  Save the changes.
+1.  Go back to the **APIs & Services > Credentials** page in the Google Cloud Console.
+2.  Edit the OAuth client you initialized and named **Meet Live Agent** in Step 3.
+3.  Add the Cloud Run URL you copied in Step 5 to the **Authorized JavaScript origins** list by clicking **+ Add URI**.
+4.  Click **Save**.
 
 ### 7. Configure Google Workspace Add-on and Marketplace SDK
  
@@ -134,16 +143,13 @@ chmod +x deploy.sh
  
  #### 7.2 Configure Google Workspace Marketplace SDK
  
- 1.  Go to the **APIs & Services > Enabled APIs & Services** page in the Google Cloud Console.
- 2.  Search for and click on **Google Workspace Marketplace SDK**.
- 3.  Click on the **App Configuration** tab.
- 4.  Fill in the required fields:
-     *   **App Visibility**: Select **Private** (and choose your domain) for testing.
-     *   **Installation Type**: Select **Individual installation**.
- 5.  Scroll down to the **Extensions** section.
- 6.  Check the box for **Google Workspace Add-on**.
- 7.  In the field that appears, paste the **Deployment ID** you copied in step 7.1.
- 8.  Save the configuration.
+ 1.  Search and select **Google Workspace Marketplace SDK** in the Google Cloud Console.
+ 2.  Click **Manage** then select the **App Configuration** tab.
+ 3.  Set **App Visibility** to **Private** for testing.
+ 4.  Set **Installation Settings** to **Individual + Admin Install**.
+ 5.  Under **App Integrations** select **Google Workspace add-on**, select **HTTP or other deployments**, and select the deployment ID **meet-live-agent**.
+ 6.  Under **Developer Information**, set the **Developer Name**, **Developer Website URL**, and **Developer Email** to your own information.
+ 7.  Click **Save Draft**.
  
  #### 7.3 Install the Add-on Deployment
  
@@ -157,12 +163,16 @@ chmod +x deploy.sh
 
 After completing the deployment and configuration, you can test the add-on in a live meeting:
 
-1.  Go to [Google Meet](https://meet.google.com) and start a new meeting.
-2.  Click on the **Activities** icon (shapes icon) in the bottom right corner.
-3.  You should see your add-on (e.g., "Meet Live Agent") listed under your Activities.
+1.  Go to [Google Meet](https://meet.google.com) and start a new **instant meeting**.
+2.  Click the **Meeting tools** icon in the bottom right corner then select the **Add-ons** tab.
+3.  You should see your add-on **Meet Live Agent** listed as installed.
 4.  Click on it to open the side panel.
 5.  Click **Connect to Meet Media API** to start the agent.
-6.  You may need to grant permissions for the add-on to access your media if prompted.
+6.  Go through the OAuth flow and grant all the permissions requested by the add-on.
+7.  Click **Connect to Meet Media API** in the side panel.
+8.  Click **Start Meet Live Agent** in the pop-up window to share audio and video of the meeting to the add-on.
+9.  The side panel should display real-time audio volume and transcripts, and a scene description.
+10. You can talk and present in the meeting to test interacting with Gemini Live.
 
 ## Building Locally
  
