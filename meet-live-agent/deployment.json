@@ -8,9 +8,9 @@
       "web": {
         "logoUrl": "https://developers.google.com/chat/images/quickstart-app-avatar.png",
         "addOnOrigins": [
-          "https://meet-live-agent-664931123675.us-west1.run.app"
+          "https://YOUR_CLOUD_RUN_URL"
         ],
-        "sidePanelUrl": "https://meet-live-agent-664931123675.us-west1.run.app",
+        "sidePanelUrl": "https://YOUR_CLOUD_RUN_URL",
         "darkModeLogoUrl": "https://developers.google.com/chat/images/quickstart-app-avatar.png"
       }
     },
