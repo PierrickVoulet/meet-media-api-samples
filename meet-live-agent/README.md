@@ -28,6 +28,7 @@ Before you begin, ensure you have:
 2.  **gcloud CLI**: Installed and authenticated. [Install guide](https://cloud.google.com/sdk/docs/install).
 3.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/).
 4.  **Google Workspace Account**: With permissions to create and use Meet Add-ons.
+5.  **Node.js**: Version >22 (required if you plan to build locally).
 
 ---
 
@@ -162,3 +163,20 @@ After completing the deployment and configuration, you can test the add-on in a 
 4.  Click on it to open the side panel.
 5.  Click **Connect to Meet Media API** to start the agent.
 6.  You may need to grant permissions for the add-on to access your media if prompted.
+
+## Building Locally
+ 
+ If you want to build the project locally (e.g., to verify the build before deploying):
+ 
+ 1.  Install the dependencies:
+     ```bash
+     npm install
+     ```
+ 2.  Run the build command:
+     ```bash
+     npm run build
+     ```
+ 
+ This will generate the static assets in the `dist` directory.
+ 
+ *Note: You do not need to build locally to deploy, as the `deploy.sh` script triggers Cloud Build to handle the build process in the cloud.*
