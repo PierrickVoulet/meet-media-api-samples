@@ -192,7 +192,7 @@ export class GdmLiveAudio extends LitElement {
     const meetingId = (window as any).meetingId;
 
     try {
-      // Initialize AudioContexts
+      // Initialize AudioContexts. Gemini expects 16kHz input and returns 24kHz output.
       this.audioContext = new AudioContext({ sampleRate: 16000 });
       this.outputAudioContext = new AudioContext({ sampleRate: 24000 });
       this.analyser = this.audioContext.createAnalyser();
@@ -201,7 +201,7 @@ export class GdmLiveAudio extends LitElement {
       
       this.nextStartTime = this.outputAudioContext.currentTime;
 
-      // Load AudioWorklet
+      // Load the AudioWorklet that captures raw PCM audio data.
       await this.audioContext.audioWorklet.addModule('/pcm-recorder-processor.js');
       this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-recorder-processor');
 
@@ -244,9 +244,9 @@ export class GdmLiveAudio extends LitElement {
         }
       };
 
-      // Initialize Gemini Live
+      // Initialize Gemini Live session.
       this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = 'gemini-3.1-flash-live-preview';
+      const model = 'gemini-3.1-flash-live-preview'; // Use the live preview model
 
       this.session = await this.ai.live.connect({
         model: model,
@@ -313,6 +313,7 @@ export class GdmLiveAudio extends LitElement {
         }
       });
 
+      // Initialize the Meet Media API client.
       this.meetClient = new MeetMediaApiClientImpl({
         meetingSpaceId: meetingId,
         numberOfVideoStreams: 1,
