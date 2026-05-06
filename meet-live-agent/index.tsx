@@ -1,4 +1,3 @@
-/// <reference types="vite/client" />
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { meet } from '@googleworkspace/meet-addons';
@@ -6,8 +5,8 @@ import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetConnectionState } from './types/enums';
 import { GoogleGenAI, Modality, Session } from '@google/genai';
 
-const CLOUD_PROJECT_NUMBER = import.meta.env.VITE_CLOUD_PROJECT_NUMBER;
-const CLIENT_ID = import.meta.env.VITE_CLIENT_ID;
+const CLOUD_PROJECT_NUMBER = process.env.CLOUD_PROJECT_NUMBER;
+const CLIENT_ID = process.env.CLIENT_ID;
 
 @customElement('gdm-live-audio')
 export class GdmLiveAudio extends LitElement {
@@ -246,7 +245,7 @@ export class GdmLiveAudio extends LitElement {
       };
 
       // Initialize Gemini Live
-      this.ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const model = 'gemini-3.1-flash-live-preview';
 
       this.session = await this.ai.live.connect({
