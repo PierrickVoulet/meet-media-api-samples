@@ -122,11 +122,14 @@ chmod +x deploy.sh
  
  1.  Open the `deployment.json` file in the root of the project.
  2.  Update the `addOnOrigins` and `sidePanelUrl` fields, replacing the placeholder `https://YOUR_CLOUD_RUN_URL` with your actual Cloud Run service URL (obtained in Step 5).
- 3.  Go to the **Google Workspace Add-ons** page in the Google Cloud Console.
- 4.  Click **Create** or **New Deployment**.
- 5.  You will be asked to provide the deployment manifest. Paste the entire content of your modified `deployment.json` file.
- 6.  Save the deployment.
- 7.  Copy the **Deployment ID** generated for this deployment.
+ 3.  Run the following command to create the deployment using the `gcloud` CLI:
+ 
+     ```bash
+     gcloud workspace-add-ons deployments create meet-live-agent \
+         --deployment-file=deployment.json
+     ```
+ 
+ 4.  The **Deployment ID** will be `meet-live-agent`. You will need this in the next step.
  
  #### 7.2 Configure Google Workspace Marketplace SDK
  
@@ -140,8 +143,16 @@ chmod +x deploy.sh
  6.  Check the box for **Google Workspace Add-on**.
  7.  In the field that appears, paste the **Deployment ID** you copied in step 7.1.
  8.  Save the configuration.
-
-## Testing the Add-on in Google Meet
+ 
+ #### 7.3 Install the Add-on Deployment
+ 
+ To install the add-on for your account so you can see it in Google Meet, run the following command:
+ 
+ ```bash
+ gcloud workspace-add-ons deployments install meet-live-agent
+ ```
+ 
+ ## Testing the Add-on in Google Meet
 
 After completing the deployment and configuration, you can test the add-on in a live meeting:
 
