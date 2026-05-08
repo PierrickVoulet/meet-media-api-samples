@@ -142,7 +142,7 @@ export class GdmLiveAudio extends LitElement {
       box-sizing: border-box;
       text-align: center;
     }
-    #agent-status-container.thinking {
+    #agent-status-container.searching {
       background: #fef7e0;
       color: #b06000;
     }
@@ -641,7 +641,7 @@ export class GdmLiveAudio extends LitElement {
           <div class="volume-level" style="width: ${volumePercentage}%"></div>
         </div>
 
-        <div id="agent-status-container" class="${this.agentStatus === 'thinking' ? 'thinking' : this.agentStatus === 'failed' ? 'failed' : ''}">
+        <div id="agent-status-container" class="${this.agentStatus === 'searching' ? 'searching' : this.agentStatus === 'failed' ? 'failed' : ''}">
             <div><span id="agent-status">${this.agentStatus.toUpperCase()}</span>${this.currentTopic ? html` / <span id="current-topic">${this.currentTopic}</span>` : ''}</div>
             ${this.errorDetails ? html`
                 <div id="error-details-container">

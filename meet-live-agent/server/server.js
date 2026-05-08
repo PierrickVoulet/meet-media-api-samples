@@ -318,6 +318,7 @@ async function setupGeminiLive(clientWs) {
         return;
     }
 
+    let activeResearchController = null;
     try {
         const sessionPromise = ai.live.connect({
             model: 'gemini-3.1-flash-live-preview',
@@ -375,6 +376,28 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                 onmessage: async (message) => {
                     console.log("Received from Gemini:", JSON.stringify(message).substring(0, 200));
 
+                    const triggerResearch = async (topic) => {
+                        if (activeResearchController) {
+                            console.log("Interrupting ongoing research for topic:", topic);
+                            activeResearchController.abort();
+                        }
+                        activeResearchController = new AbortController();
+                        const signal = activeResearchController.signal;
+                        try {
+                            await handleResearchTopic(topic, signal);
+                        } catch (e) {
+                            if (e.name === 'AbortError') {
+                                console.log("Research task was aborted.");
+                            } else {
+                                console.error("Error in research task:", e);
+                            }
+                        } finally {
+                            if (activeResearchController?.signal === signal) {
+                                activeResearchController = null;
+                            }
+                        }
+                    };
+
                     // Handle serverContent (Audio or Tool Calls)
                     if (message.serverContent) {
                         const content = message.serverContent;
@@ -399,7 +422,7 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                                     if (name === "push_a2ui_card") {
                                         broadcastUiUpdate(args.message);
                                     } else if (name === "research_topic") {
-                                        await handleResearchTopic(args.topic);
+                                        await triggerResearch(args.topic);
                                     }
                                 }
                             }
@@ -418,7 +441,7 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                                 if (name === "push_a2ui_card") {
                                     broadcastUiUpdate(args.message);
                                 } else if (name === "research_topic") {
-                                    await handleResearchTopic(args.topic);
+                                    await triggerResearch(args.topic);
                                 }
                             }
                         }
@@ -454,7 +477,7 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
     }
 }
 
-async function handleResearchTopic(topic) {
+async function handleResearchTopic(topic, signal) {
     console.log("Handling research for topic:", topic);
 
     if (!ai) {
@@ -463,7 +486,7 @@ async function handleResearchTopic(topic) {
         return;
     }
 
-    broadcastUiUpdate({ type: "agent_status", status: "thinking", topic: topic });
+    broadcastUiUpdate({ type: "agent_status", status: "searching", topic: topic });
 
     const historyStr = conversationHistory.join("\n");
 
@@ -521,7 +544,12 @@ async function handleResearchTopic(topic) {
             config: {
                 tools: [{ googleSearch: {} }]
             }
-        });
+        }, { signal });
+
+        if (signal && signal.aborted) {
+            console.log("Research task was aborted, ignoring result.");
+            return;
+        }
 
         let resultText = response.text;
         console.log("Subagent response:", resultText);
