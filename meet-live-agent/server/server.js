@@ -8,7 +8,7 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const axios = require('axios');
-const https = require('https');
+
 const path = require('path');
 const WebSocket = require('ws');
 const { URLSearchParams, URL } = require('url');
@@ -44,6 +44,7 @@ const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 let ai = null;
 if (apiKey) {
     ai = new GoogleGenAI({ apiKey: apiKey });
+    console.log("API KEY FOUND (proxy will use this)");
 }
 
 const staticPath = path.join(__dirname,'dist');
@@ -53,9 +54,6 @@ const publicPath = path.join(__dirname,'public');
 if (!apiKey) {
     // Only log an error, don't exit. The server will serve apps without proxy functionality
     console.error("Warning: GEMINI_API_KEY or API_KEY environment variable is not set! Proxy functionality will be disabled.");
-}
-else {
-  console.log("API KEY FOUND (proxy will use this)")
 }
 
 // Limit body size to 50mb

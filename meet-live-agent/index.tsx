@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { meet } from '@googleworkspace/meet-addons';
 import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetConnectionState } from './types/enums';
-import { GoogleGenAI, Modality, Session } from '@google/genai';
+
 import React from 'react';
 import ReactDOM from 'react-dom';
 import { A2uiSurface, basicCatalog, MarkdownContext } from '@a2ui/react/v0_9';
@@ -51,8 +51,7 @@ export class GdmLiveAudio extends LitElement {
   private dataArray: Uint8Array | null = null;
   private animationFrameId: number | null = null;
   
-  private ai: GoogleGenAI | null = null;
-  private session: Session | null = null;
+
   private workletNode: AudioWorkletNode | null = null;
 
 
@@ -796,26 +795,6 @@ export class GdmLiveAudio extends LitElement {
       view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
     }
     return buffer;
-  }
-
-  private arrayBufferToBase64(buffer: ArrayBufferLike): string {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
-  private base64ToUint8Array(base64: string): Uint8Array {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
   }
 
   render() {
