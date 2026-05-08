@@ -325,9 +325,12 @@ async function setupGeminiLive(clientWs) {
                 responseModalities: [Modality.AUDIO],
                 systemInstruction: {
                     parts: [{
-                        text: `You are a helpful assistant. You do NOT speak to the user using audio.
+                        text: `You are a helpful assistant acting as an add-on in a Google Meeting. The audio and video streams you receive represent what people in the meeting are saying and showing in real-time.
                         
-You MUST NEVER answer with audio. For EVERY new user request, you MUST invoke the \`research_topic\` tool to get the answer and update the UI. Do not rely on your own knowledge or just answer with audio for any requests.
+You MUST NEVER answer with audio. You should ONLY invoke the \`research_topic\` tool (to answer and update the UI) in two scenarios:
+1. The user explicitly asks you a question after saying "OK Gemini".
+2. You detect an important topic being discussed in the meeting and decide to proactively show more relevant information about it.
+For all other conversation, remain passive and do not trigger tool calls.
                         
 When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure in the \`message\` argument.`
                     }]
@@ -350,13 +353,13 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                         },
                         {
                             name: "research_topic",
-                            description: "Research a topic using a subagent with search capabilities.",
+                            description: "Answer a user request. The topic parameter should be a concise yet accurate summary of what the user asked.",
                             parameters: {
                                 type: "OBJECT",
                                 properties: {
                                     topic: {
                                         type: "STRING",
-                                        description: "The topic to research."
+                                        description: "A concise yet accurate summary of the user's request."
                                     }
                                 },
                                 required: ["topic"]
@@ -489,12 +492,12 @@ async function handleResearchTopic(topic) {
        *CORRECT*: \`"children": ["child1"]\` (with \`child1\` defined as a separate object in the main \`components\` list).
     3. Available components: Column, Row, List, Text, Image, Icon. Do NOT use the \`Card\` component as it is not supported.
     4. \`Link\` and \`Markdown\` components do NOT exist. Use \`Text\` component instead.
-    5. \`Text\` component supports markdown, so you can use markdown links like \`[Title](URL)\` inside the \`text\` property of a \`Text\` component to render links.
+    5. \`Text\` component supports markdown. You can use markdown links like \`[Title](URL)\` to render links, and standard markdown like \`**bold**\` and \`*italic*\` to highlight and emphasize important information within the text.
     6. You MUST include a 'Sources' section at the bottom of your UI, using \`Text\` components with markdown links to list the sources used.
     7. For each source, use standard markdown links like \`[Title](URL)\`. NEVER display the full raw URL as text. Keep the Title concise.
     8. Limit the list of sources to at most 5.
     9. **Images and Visuals**:
-       - **Public Images**: Actively look for public image URLs in the search results (such as company logos, official portraits, or diagrams) and include them in the A2UI content using the \`Image\` component. These are important for illustrating the content.
+       - **Public Images**: Actively look for public image URLs in the search results (such as company logos, official portraits, or diagrams) and include them in the A2UI content using the \`Image\` component. Ensure that the URLs are valid and likely to be accessible. Avoid temporary or broken links. These are important for illustrating the content.
        - **Local Icons**: ALSO actively use the following local image asset URLs as icons to make the UI more visually appealing and scannable. Do not let local icons replace the search for public illustrative images.
          Available assets: search, home, settings, person, delete, info, help, check, close, menu, mail, call, chat, add, remove, star, share, download, upload, edit, visibility, lock, schedule, notifications, warning, error, image, movie, folder, cloud, wifi, account_circle, arrow_forward, arrow_back, chevron_right, chevron_left, thumb_up, thumb_down, visibility_off, lock_open, calendar_today, priority_high, attach_file, music_note, folder_open, cloud_upload, cloud_download, battery_full.
          Access them via \`/public/assets/{name}.svg\` (e.g., \`/public/assets/search.svg\`).
@@ -554,6 +557,17 @@ async function handleResearchTopic(topic) {
                 if (comp.properties) {
                     Object.assign(comp, comp.properties);
                     delete comp.properties;
+                }
+
+                // Map 'markdown' property to 'text' for Text components
+                if (comp.component === 'Text' && comp.markdown) {
+                    comp.text = comp.markdown;
+                    delete comp.markdown;
+                }
+
+                // Map 'Icon' with 'url' to 'Image'
+                if (comp.component === 'Icon' && comp.url) {
+                    comp.component = 'Image';
                 }
 
                 if (!seenIds.has(comp.id)) {
