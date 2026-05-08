@@ -21,6 +21,10 @@ const app = express();
 const uiConnections = [];
 const videoBuffer = [];
 const conversationHistory = [];
+let isUiLocked = false;
+let activeResearchController = null;
+let activeGeminiSession = null;
+let waitingForUserRequestResponse = false;
 
 async function broadcastUiUpdate(payload) {
     console.log("Broadcasting UI update:", payload);
@@ -276,6 +280,37 @@ const wss = new WebSocket.Server({ noServer: true });
 function handleUiConnection(ws) {
     uiConnections.push(ws);
     console.log('UI client connected. Total:', uiConnections.length);
+
+    ws.on('message', async (message) => {
+        console.log('Raw message received on UI WebSocket:', message);
+        try {
+            const msg = JSON.parse(message);
+            console.log('Parsed UI message:', msg);
+            if (msg.type === 'user_request') {
+                console.log('Received user request from UI:', msg.text);
+                isUiLocked = true;
+                waitingForUserRequestResponse = true;
+                if (activeGeminiSession) {
+                    console.log("Sending text request to Gemini Live session:", msg.text);
+                    try {
+                        activeGeminiSession.sendRealtimeInput({
+                            text: msg.text
+                        });
+                    } catch (e) {
+                        console.error("Failed to send text to Gemini session:", e);
+                    }
+                } else {
+                    console.warn("No active Gemini session to send text request to.");
+                }
+            } else if (msg.type === 'unlock_request') {
+                console.log('Received unlock request from UI');
+                isUiLocked = false;
+            }
+        } catch (e) {
+            console.error("Error handling UI message:", e);
+        }
+    });
+
     ws.on('close', () => {
         const index = uiConnections.indexOf(ws);
         if (index > -1) uiConnections.splice(index, 1);
@@ -318,7 +353,6 @@ async function setupGeminiLive(clientWs) {
         return;
     }
 
-    let activeResearchController = null;
     try {
         const sessionPromise = ai.live.connect({
             model: 'gemini-3.1-flash-live-preview',
@@ -328,9 +362,10 @@ async function setupGeminiLive(clientWs) {
                     parts: [{
                         text: `You are a helpful assistant acting as an add-on in a Google Meeting. The audio and video streams you receive represent what people in the meeting are saying and showing in real-time.
                         
-You MUST NEVER answer with audio. You should ONLY invoke the \`research_topic\` tool (to answer and update the UI) in two scenarios:
-1. The user explicitly asks you a question after saying "OK Gemini".
-2. You detect an important topic being discussed in the meeting and decide to proactively show more relevant information about it.
+You MUST NEVER answer with audio. You should invoke the \`research_topic\` tool in two scenarios:
+1. You receive an explicit text request from the user. You MUST answer this request by calling \`research_topic\` and setting the \`source\` parameter to 'user'.
+2. You proactively identify an important, specific topic or question being discussed in the meeting and decide to show more information about it. In this case, set the \`source\` parameter to 'proactive'. Do NOT trigger research for mundane things, small talk, or greetings.
+Do NOT respond to explicit user requests or questions in the audio stream.
 For all other conversation, remain passive and do not trigger tool calls.
                         
 When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure in the \`message\` argument.`
@@ -360,10 +395,14 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                                 properties: {
                                     topic: {
                                         type: "STRING",
-                                        description: "A concise yet accurate summary of the user's request."
+                                        description: "A concise yet accurate summary of the request."
+                                    },
+                                    source: {
+                                        type: "STRING",
+                                        description: "Set to 'user' if responding to an explicit text request, or 'proactive' if analyzing meeting audio."
                                     }
                                 },
-                                required: ["topic"]
+                                required: ["topic", "source"]
                             }
                         }
                     ]
@@ -374,9 +413,20 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                     console.log("Connected to Gemini Live API.");
                 },
                 onmessage: async (message) => {
-                    console.log("Received from Gemini:", JSON.stringify(message).substring(0, 200));
+                    if (message.serverContent?.modelTurn?.parts) {
+                        console.log("Gemini Model Turn Parts:", JSON.stringify(message.serverContent.modelTurn.parts));
+                    } else if (message.toolCall) {
+                        console.log("Gemini Tool Call:", JSON.stringify(message.toolCall));
+                    } else {
+                        console.log("Received from Gemini:", JSON.stringify(message).substring(0, 200));
+                    }
 
-                    const triggerResearch = async (topic) => {
+                    const triggerResearch = async (topic, source) => {
+                        if (isUiLocked && !waitingForUserRequestResponse) {
+                            console.log(`UI is locked, ignoring proactive research for topic: ${topic}`);
+                            return;
+                        }
+                        waitingForUserRequestResponse = false; // Consume flag
                         if (activeResearchController) {
                             console.log("Interrupting ongoing research for topic:", topic);
                             activeResearchController.abort();
@@ -422,7 +472,7 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                                     if (name === "push_a2ui_card") {
                                         broadcastUiUpdate(args.message);
                                     } else if (name === "research_topic") {
-                                        await triggerResearch(args.topic);
+                                        await triggerResearch(args.topic, args.source);
                                     }
                                 }
                             }
@@ -441,7 +491,7 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                                 if (name === "push_a2ui_card") {
                                     broadcastUiUpdate(args.message);
                                 } else if (name === "research_topic") {
-                                    await triggerResearch(args.topic);
+                                    await triggerResearch(args.topic, args.source);
                                 }
                             }
                         }
@@ -451,6 +501,9 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
                 onclose: () => console.log("Gemini Live closed")
             }
         });
+
+        const session = await sessionPromise;
+        activeGeminiSession = session;
 
         clientWs.on('message', async (data) => {
             const session = await sessionPromise;
@@ -580,6 +633,13 @@ async function handleResearchTopic(topic, signal) {
 
             function processComponent(comp) {
                 if (!comp || typeof comp !== 'object') return;
+
+                // Map 'type' to 'component' if 'component' is missing
+                if (comp.type && !comp.component) {
+                    comp.component = comp.type;
+                    // Keep type if needed by renderer, but A2UI spec says 'component'. Let's delete it to be clean.
+                    delete comp.type;
+                }
                 
                 // Flatten properties if present
                 if (comp.properties) {

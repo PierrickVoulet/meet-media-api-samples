@@ -24,8 +24,15 @@ export class GdmLiveAudio extends LitElement {
   @state() currentTopic = '';
   @state() errorDetails = '';
   @state() uiReceived = false;
+  @state() textRequest = '';
+  @state() isLocked = false;
+  @state() fps = 0;
+  @state() audioStreaming = true;
+  @state() videoStreaming = true;
+  @state() framesPer5Seconds = 1;
 
   private processor = new MessageProcessor([basicCatalog]);
+  private frameTimes: number[] = [];
   private createdSurfaces = new Set<string>();
   private reactRoot: any = null;
   private uiWs: WebSocket | null = null;
@@ -96,19 +103,81 @@ export class GdmLiveAudio extends LitElement {
       color: #f44336;
       margin-top: 0.625rem;
     }
-    .volume-bar {
+    .progress-bar {
       width: 100%;
-      height: 1.25rem;
+      height: 2rem;
       background-color: #333;
-      border-radius: 0.625rem;
+      border-radius: 0.25rem;
       overflow: hidden;
-      margin-top: 1.25rem;
+      margin-top: 0.625rem;
       box-sizing: border-box;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .volume-level {
+    .progress-level {
       height: 100%;
       background-color: #4caf50;
       transition: width 0.1s ease;
+      position: absolute;
+      left: 0;
+      top: 0;
+      z-index: 0;
+    }
+    .bar-label {
+      color: white;
+      font-size: 0.75rem;
+      font-weight: bold;
+      z-index: 1;
+    }
+    .stream-row {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      height: 2.5rem;
+      margin-top: 0.625rem;
+      box-sizing: border-box;
+    }
+    .stream-row .progress-bar {
+      flex-grow: 1;
+      margin-top: 0;
+    }
+    .stream-row button {
+      padding: 0.5rem;
+      color: white;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      margin: 0 0.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      transition: background-color 0.2s;
+    }
+    .stream-row button:first-child {
+      margin-left: 0;
+    }
+    .stream-row button:last-child {
+      margin-right: 0;
+    }
+    .stream-row button.enabled {
+      background-color: #4caf50;
+    }
+    .stream-row button.disabled {
+      background-color: #f44336;
+    }
+    .stream-row button.enabled:hover {
+      background-color: #45a049;
+    }
+    .stream-row button.disabled:hover {
+      background-color: #d32f2f;
+    }
+    .stream-row img {
+      width: 20px;
+      height: 20px;
     }
     .transcript-area {
       width: 95%;
@@ -131,6 +200,45 @@ export class GdmLiveAudio extends LitElement {
     }
     .hidden-video {
       display: none;
+    }
+    #input-container {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      margin-top: 1.25rem;
+      box-sizing: border-box;
+    }
+    #input-container input {
+      flex-grow: 1;
+      padding: 0.625rem;
+      border: 1px solid #dadce0;
+      border-radius: 0.25rem;
+      margin-right: 0.5rem;
+      background: #222;
+      color: white;
+    }
+    #input-container button {
+      padding: 0.5rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 0.25rem;
+    }
+    #input-container button:hover {
+      background-color: #0056b3;
+    }
+    #input-container button[disabled] {
+      background-color: #555;
+      cursor: not-allowed;
+    }
+    #input-container img {
+      width: 20px;
+      height: 20px;
     }
     #agent-status-container {
       margin-top: 0.9375rem;
@@ -203,6 +311,74 @@ export class GdmLiveAudio extends LitElement {
 
   private unloadHandler() {
     this.disconnect();
+  }
+
+  private handleInput(e: Event) {
+    this.textRequest = (e.target as HTMLInputElement).value;
+  }
+
+  private submitRequest() {
+    if (!this.textRequest.trim()) return;
+    console.log('Submitting text request:', this.textRequest);
+    
+    if (this.uiWs && this.uiWs.readyState === WebSocket.OPEN) {
+      const msg = {
+        type: 'user_request',
+        text: this.textRequest
+      };
+      this.uiWs.send(JSON.stringify(msg));
+      this.isLocked = true;
+      this.textRequest = ''; // Clear the text field
+    } else {
+      console.warn('UI WebSocket is not open. ReadyState:', this.uiWs ? this.uiWs.readyState : 'null');
+      this.error = "Connection to server lost. Please wait or try again.";
+    }
+  }
+
+  private unlock() {
+    this.isLocked = false;
+    this.textRequest = '';
+    if (this.uiWs && this.uiWs.readyState === WebSocket.OPEN) {
+       const msg = {
+         type: 'unlock_request'
+       };
+       this.uiWs.send(JSON.stringify(msg));
+    }
+  }
+
+  private toggleAudio() {
+    this.audioStreaming = !this.audioStreaming;
+    console.log('Audio streaming toggled to:', this.audioStreaming);
+  }
+
+  private toggleVideo() {
+    this.videoStreaming = !this.videoStreaming;
+    console.log('Video streaming toggled to:', this.videoStreaming);
+  }
+
+  private increaseFPS() {
+    if (this.framesPer5Seconds < 5) {
+      this.framesPer5Seconds++;
+      this.updateVideoInterval();
+    }
+  }
+
+  private decreaseFPS() {
+    if (this.framesPer5Seconds > 1) {
+      this.framesPer5Seconds--;
+      this.updateVideoInterval();
+    }
+  }
+
+  private updateVideoInterval() {
+    if (this.videoIntervalId) {
+      window.clearInterval(this.videoIntervalId);
+    }
+    const interval = 5000 / this.framesPer5Seconds;
+    this.videoIntervalId = window.setInterval(() => {
+      this.captureAndProcessFrame();
+    }, interval);
+    console.log(`Video interval updated to ${interval}ms (${this.framesPer5Seconds} frames per 5s)`);
   }
 
   firstUpdated() {
@@ -297,7 +473,7 @@ export class GdmLiveAudio extends LitElement {
 
         const pcmBuffer = this.floatTo16BitPCM(inputData);
         
-        if (this.audioWs && this.audioWs.readyState === WebSocket.OPEN) {
+        if (this.audioStreaming && this.audioWs && this.audioWs.readyState === WebSocket.OPEN) {
           this.audioWs.send(pcmBuffer);
         }
       };
@@ -394,7 +570,7 @@ export class GdmLiveAudio extends LitElement {
       if (!Array.isArray(data) && data.type === "agent_status") {
         this.agentStatus = data.status;
         if (data.topic) this.currentTopic = data.topic;
-        if (data.error) this.errorDetails = data.error;
+        this.errorDetails = data.error || ''; // Clear error if not present
         return;
       }
 
@@ -481,13 +657,24 @@ export class GdmLiveAudio extends LitElement {
   }
 
   private startVideoProcessing() {
-    this.videoIntervalId = window.setInterval(() => {
-      this.captureAndProcessFrame();
-    }, 5000); // Every 5 seconds
+    this.updateVideoInterval();
   }
 
   private async captureAndProcessFrame() {
     if (!this.videoEl || !this.canvasEl) return;
+
+    const now = performance.now();
+    
+    if (this.videoStreaming) {
+      this.frameTimes.push(now);
+    }
+    
+    while (this.frameTimes.length > 0 && this.frameTimes[0] < now - 5000) {
+        this.frameTimes.shift();
+    }
+    this.fps = this.frameTimes.length / 5;
+
+    if (!this.videoStreaming) return;
 
     const ctx = this.canvasEl.getContext('2d');
     if (!ctx) return;
@@ -625,7 +812,7 @@ export class GdmLiveAudio extends LitElement {
   }
 
   render() {
-    const volumePercentage = (this.volume / 255) * 100;
+    const volumePercentage = this.audioStreaming ? (this.volume / 255) * 100 : 0;
     return html`
       ${!this.initialized ? html`<div>Initializing...</div>` : ''}
 
@@ -637,18 +824,52 @@ export class GdmLiveAudio extends LitElement {
       
       ${this.connected ? html`
 
-        <div class="volume-bar">
-          <div class="volume-level" style="width: ${volumePercentage}%"></div>
+        <div class="stream-row">
+          <div class="progress-bar">
+            <div class="progress-level" style="width: ${volumePercentage}%"></div>
+            <span class="bar-label">Volume: ${Math.round(volumePercentage)}%</span>
+          </div>
+          <button class="${this.audioStreaming ? 'enabled' : 'disabled'}" @click=${this.toggleAudio} title="${this.audioStreaming ? 'Stop Audio' : 'Start Audio'}">
+            <img src="${this.audioStreaming ? '/public/assets/music_note.svg' : '/public/assets/close.svg'}" alt="Toggle Audio">
+          </button>
         </div>
 
-        <div id="agent-status-container" class="${this.agentStatus === 'searching' ? 'searching' : this.agentStatus === 'failed' ? 'failed' : ''}">
-            <div><span id="agent-status">${this.agentStatus.toUpperCase()}</span>${this.currentTopic ? html` / <span id="current-topic">${this.currentTopic}</span>` : ''}</div>
-            ${this.errorDetails ? html`
-                <div id="error-details-container">
-                    <strong>Error:</strong> <span id="error-details">${this.errorDetails}</span>
-                </div>
-            ` : ''}
+        <div class="stream-row">
+          <button @click=${this.decreaseFPS} title="Decrease FPS" ?disabled=${this.framesPer5Seconds <= 1 || !this.videoStreaming}>
+            <img src="/public/assets/remove.svg" alt="-">
+          </button>
+          <div class="progress-bar">
+            <div class="progress-level" style="width: ${Math.min(100, (this.fps / (this.framesPer5Seconds / 5)) * 100)}%"></div>
+            <span class="bar-label">Actual: ${this.fps.toFixed(1)} / Target: ${this.videoStreaming ? (this.framesPer5Seconds / 5).toFixed(1) : '0.0'} FPS</span>
+          </div>
+          <button @click=${this.increaseFPS} title="Increase FPS" ?disabled=${this.framesPer5Seconds >= 5 || !this.videoStreaming}>
+            <img src="/public/assets/add.svg" alt="+">
+          </button>
+          <button class="${this.videoStreaming ? 'enabled' : 'disabled'}" @click=${this.toggleVideo} title="${this.videoStreaming ? 'Stop Video' : 'Start Video'}">
+            <img src="${this.videoStreaming ? '/public/assets/visibility.svg' : '/public/assets/visibility_off.svg'}" alt="Toggle Video">
+          </button>
         </div>
+
+        <div id="input-container">
+          <input type="text" .value=${this.textRequest} @input=${this.handleInput} placeholder="Ask Gemini...">
+          <button @click=${this.submitRequest} title="Send">
+            <img src="/public/assets/send.svg" alt="Send">
+          </button>
+          <button @click=${this.unlock} ?disabled=${!this.isLocked} title="Unlock">
+            <img src="/public/assets/lock_open.svg" alt="Unlock">
+          </button>
+        </div>
+
+        ${this.currentTopic ? html`
+          <div id="agent-status-container" class="${this.agentStatus === 'searching' ? 'searching' : this.agentStatus === 'failed' ? 'failed' : ''}">
+              <div><span id="current-topic">${this.currentTopic}</span></div>
+              ${this.errorDetails ? html`
+                  <div id="error-details-container">
+                      <strong>Error:</strong> <span id="error-details">${this.errorDetails}</span>
+                  </div>
+              ` : ''}
+          </div>
+        ` : ''}
         
       ` : ''}
       
