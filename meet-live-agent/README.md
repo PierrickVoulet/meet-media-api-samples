@@ -9,15 +9,22 @@ This sample project demonstrates how to integrate Google Meet with Gemini Live t
 
 The application consists of a frontend built with Lit web components and a Node.js backend.
 
--   **Frontend**: Uses the `@googleworkspace/meet-addons` SDK to integrate with Google Meet and the `@google/genai` SDK to connect to Gemini Live. It captures audio and video from the meeting via the Meet Media API and streams it to Gemini.
--   **Backend**: An Express server that serves the static frontend files and acts as a secure reverse proxy for Gemini API calls (both HTTP and WebSockets). This allows the application to use the Gemini API without exposing the API key in the browser. It automatically injects an interceptor script to route SDK calls through the proxy.
+-   **Frontend**: Uses the `@googleworkspace/meet-addons` SDK to integrate with Google Meet and the `@google/genai` SDK to connect to Gemini Live. It captures audio and video from the meeting via the Meet Media API and streams it to Gemini. The UI is rendered dynamically using the A2UI protocol.
+-   **Backend**: An Express server that serves the static frontend files and acts as a secure reverse proxy for Gemini API calls. It also processes incoming search results from the subagent, auto-corrects common model mistakes (like flattening nested components and URI encoding URLs), and enforces a single-line status display.
 
 ## Main Features
 
 -   **Real-time Bidirectional Audio**: Speak to Gemini and hear it respond in real-time within the meeting.
 -   **Visual Grounding**: The agent receives video frames from the meeting, allowing it to "see" and comment on what's happening.
--   **Live Transcription**: Displays transcripts of what participants say and what Gemini says.
--   **Scene Description**: Periodically generates a description of the visual scene using `gemini-2.5-flash`.
+-   **Intelligent Research Agent**: Uses a subagent powered by \`gemini-2.5-flash\` and Google Search to answer user requests and generate rich visual content.
+-   **Dynamic A2UI Cards**: Renders structured information (Column, Row, Text, Image) dynamically in the Meet side panel.
+-   **Smart Activity Triggering**: The agent only processes requests when addressed with "OK Gemini" or when it proactively identifies an important topic being discussed.
+-   **Visual Enrichment**: Uses local SVG assets as icons to make the UI more scannable and visually appealing.
+-   **Robust Server-Side Processing**: 
+    -   Auto-corrects model violations of A2UI flattening rules.
+    -   Automatically URI encodes URLs in markdown links to prevent rendering breakage.
+    -   Uses \`AbortController\` to cancel ongoing research tasks when a new high-priority request arrives.
+-   **Optimized Layout**: Full-width volume bar, dynamic height filling, and no horizontal scrolling for a premium side-panel experience.
 -   **Secure Proxy**: Protects your Gemini API key by routing requests through the backend.
 
 ## Prerequisites
