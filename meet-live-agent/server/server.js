@@ -491,11 +491,14 @@ async function handleResearchTopic(topic) {
     4. \`Link\` and \`Markdown\` components do NOT exist. Use \`Text\` component instead.
     5. \`Text\` component supports markdown, so you can use markdown links like \`[Title](URL)\` inside the \`text\` property of a \`Text\` component to render links.
     6. You MUST include a 'Sources' section at the bottom of your UI, using \`Text\` components with markdown links to list the sources used.
-    7. **Images and Visuals**:
+    7. For each source, use standard markdown links like \`[Title](URL)\`. NEVER display the full raw URL as text. Keep the Title concise.
+    8. Limit the list of sources to at most 5.
+    9. **Images and Visuals**:
        - Actively look for public image URLs in the search results (such as company logos, official portraits, or diagrams) and include them in the A2UI content using the \`Image\` component with its \`url\` property.
-       - You can also use the following local asset URLs (SVGs) to enhance the UI layout if relevant:
+       - Actively use the following local image asset URLs as icons to make the UI more visually appealing and scannable. Do not just return plain text. Use them to create icons for headers, list items, or status indicators.
          Available assets: search, home, settings, person, delete, info, help, check, close, menu, mail, call, chat, add, remove, star, share, download, upload, edit, visibility, lock, schedule, notifications, warning, error, image, movie, folder, cloud, wifi, account_circle, arrow_forward, arrow_back, chevron_right, chevron_left, thumb_up, thumb_down, visibility_off, lock_open, calendar_today, priority_high, attach_file, music_note, folder_open, cloud_upload, cloud_download, battery_full.
          Access them via \`/assets/{name}.svg\` (e.g., \`/assets/search.svg\`).
+       - **Example**: Use a \`Row\` with an \`Image\` (url: \`/assets/info.svg\`) and \`Text\` to create labeled sections.
     `;
 
     const contents = [prompt];

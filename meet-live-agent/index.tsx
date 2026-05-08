@@ -98,7 +98,6 @@ export class GdmLiveAudio extends LitElement {
     }
     .volume-bar {
       width: 100%;
-      max-width: 12.5rem;
       height: 1.25rem;
       background-color: #333;
       border-radius: 0.625rem;
@@ -141,6 +140,7 @@ export class GdmLiveAudio extends LitElement {
       color: #1a73e8;
       width: 100%;
       box-sizing: border-box;
+      text-align: center;
     }
     #agent-status-container.thinking {
       background: #fef7e0;
@@ -160,7 +160,7 @@ export class GdmLiveAudio extends LitElement {
       color: #333;
       width: 100%;
       box-sizing: border-box;
-      max-height: 25rem;
+      flex-grow: 1;
       overflow-y: auto;
       overflow-x: hidden;
       max-width: 100%;
@@ -642,12 +642,7 @@ export class GdmLiveAudio extends LitElement {
         </div>
 
         <div id="agent-status-container" class="${this.agentStatus === 'thinking' ? 'thinking' : this.agentStatus === 'failed' ? 'failed' : ''}">
-            ${this.currentTopic ? html`
-                <div id="current-topic-container">
-                    <strong>Last Topic:</strong> <span id="current-topic">${this.currentTopic}</span>
-                </div>
-            ` : ''}
-            <div><strong>Processing Agent Status:</strong> <span id="agent-status">${this.agentStatus}</span></div>
+            <div><span id="agent-status">${this.agentStatus.toUpperCase()}</span>${this.currentTopic ? html` / <span id="current-topic">${this.currentTopic}</span>` : ''}</div>
             ${this.errorDetails ? html`
                 <div id="error-details-container">
                     <strong>Error:</strong> <span id="error-details">${this.errorDetails}</span>
