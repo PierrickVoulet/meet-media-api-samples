@@ -583,9 +583,9 @@ async function handleResearchTopic(topic, signal) {
     ${historyStr}
     ---
     
-    You MUST use the available tools to gather information. 
+    You MUST use the available tools to gather information. Do NOT reuse previous tool results from the conversation history if they are not directly relevant to the current query. Always perform a fresh search if you need up-to-date information.
     - For general research, use the Google Search tool.
-    - For calendar queries, you MUST use the \`list_events\` or \`get_event\` tool. Do NOT rely on your training data or make up data (hallucinate).
+    - For calendar queries, you MUST use the \`list_events\`, \`get_event\`, \`create_event\`, \`delete_event\`, or \`update_event\` tool. Do NOT rely on your training data or make up data (hallucinate).
     You MUST output your response as a valid v0.9 A2UI message sequence (array). Do NOT use Google Workspace Add-on card format or any other format. Do not return any other text outside the JSON.
     
     Example of valid A2UI output for calendar events:
@@ -703,6 +703,53 @@ async function handleResearchTopic(topic, signal) {
                                     }
                                 },
                                 {
+                                    name: "create_event",
+                                    description: "Creates a calendar event.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            summary: { type: "STRING", description: "Required. Title of the event." },
+                                            startTime: { type: "STRING", description: "Required. The start time of the event formatted as per ISO 8601." },
+                                            endTime: { type: "STRING", description: "Required. The end time of the event formatted as per ISO 8601." },
+                                            calendarId: { type: "STRING", description: "Optional. The calendar ID to create the event on. The default is the user's primary calendar." },
+                                            description: { type: "STRING", description: "Optional. Description of the event." },
+                                            attendeeEmails: { type: "ARRAY", items: { type: "STRING" }, description: "Optional. The additional attendees of the event, as email addresses." }
+                                        },
+                                        required: ["summary", "startTime", "endTime"]
+                                    }
+                                },
+                                {
+                                    name: "delete_event",
+                                    description: "Deletes a calendar event.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            eventId: { type: "STRING", description: "Required. The ID of the event to delete." },
+                                            calendarId: { type: "STRING", description: "Optional. The calendar ID of the event to delete. The default is the user's primary calendar." }
+                                        },
+                                        required: ["eventId"]
+                                    }
+                                },
+                                {
+                                    name: "update_event",
+                                    description: "Updates a calendar event.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            eventId: { type: "STRING", description: "Required. The ID of the event to update." },
+                                            calendarId: { type: "STRING", description: "Optional. The calendar ID of the event to update. The default is the user's primary calendar." },
+                                            summary: { type: "STRING", description: "Optional. The new title of the event." },
+                                            startTime: { type: "STRING", description: "Optional. The new start time of the event formatted as per ISO 8601." },
+                                            endTime: { type: "STRING", description: "Optional. The new end time of the event formatted as per ISO 8601." },
+                                            description: { type: "STRING", description: "Optional. The new description of the event." },
+                                            location: { type: "STRING", description: "Optional. The new location of the event." },
+                                            addedAttendeeEmails: { type: "ARRAY", items: { type: "STRING" }, description: "Optional. The additional attendees of the event, as email addresses." },
+                                            removedAttendeeEmails: { type: "ARRAY", items: { type: "STRING" }, description: "Optional. The attendees of the event to remove, as email addresses." }
+                                        },
+                                        required: ["eventId"]
+                                    }
+                                },
+                                {
                                     name: "no_calendar_tool_needed",
                                     description: "Call this tool if you can answer the user's request without using any calendar tools.",
                                     parameters: {
@@ -719,7 +766,7 @@ async function handleResearchTopic(topic, signal) {
                         ...(turnCount === 1 ? {
                             functionCallingConfig: {
                                 mode: 'ANY',
-                                allowedFunctionNames: ['list_events', 'get_event', 'no_calendar_tool_needed']
+                                allowedFunctionNames: ['list_events', 'get_event', 'create_event', 'delete_event', 'update_event', 'no_calendar_tool_needed']
                             }
                         } : {}),
                         includeServerSideToolInvocations: true
@@ -771,14 +818,13 @@ async function handleResearchTopic(topic, signal) {
         }
 
         // Clean up markdown code blocks if present
-        let cleanedText = resultText.trim();
-        if (cleanedText.startsWith("```json")) {
-            cleanedText = cleanedText.substring(7);
+        const match = resultText.match(/```json\s*([\s\S]*?)\s*```/);
+        let cleanedText;
+        if (match) {
+            cleanedText = match[1].trim();
+        } else {
+            cleanedText = resultText.trim();
         }
-        if (cleanedText.endsWith("```")) {
-            cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-        }
-        cleanedText = cleanedText.trim();
 
         try {
             const cardData = JSON.parse(cleanedText);
