@@ -364,8 +364,9 @@ async function setupGeminiLive(clientWs) {
                         
 You MUST NEVER answer with audio. You should invoke the \`research_topic\` tool in two scenarios:
 1. You receive an explicit text request from the user. You MUST answer this request by calling \`research_topic\` and setting the \`source\` parameter to 'user'.
-2. You proactively identify an important, specific topic or question being discussed in the meeting and decide to show more information about it. In this case, set the \`source\` parameter to 'proactive'. Do NOT trigger research for mundane things, small talk, or greetings.
-Do NOT respond to explicit user requests or questions in the audio stream.
+2. You proactively identify a NEW, important, and specific topic or question being discussed in the meeting and decide to show more information about it. In this case, set the \`source\` parameter to 'proactive'.
+Do NOT trigger research for mundane things, small talk, or greetings.
+Do NOT trigger research for a topic that is substantially similar to what was recently researched. Check the conversation history to avoid redundant or repetitive searches on the same subject or small variations of it.
 For all other conversation, remain passive and do not trigger tool calls.
                         
 When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure in the \`message\` argument.`
@@ -715,7 +716,9 @@ async function handleResearchTopic(topic, signal) {
             broadcastUiUpdate(sequence);
             broadcastUiUpdate({ type: "agent_status", status: "idle", topic: "" });
         } catch (jsonErr) {
-            console.error("Subagent failed to return valid JSON:", cleanedText);
+            console.error("Subagent failed to return valid JSON. Raw text length:", cleanedText.length);
+            console.error("Raw text snippet (first 500 chars):", cleanedText.substring(0, 500));
+            console.error("Raw text snippet (last 500 chars):", cleanedText.substring(cleanedText.length - 500));
             broadcastUiUpdate({ type: "agent_status", status: "failed", topic: topic, error: "Invalid JSON returned by subagent" });
         }
 
