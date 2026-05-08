@@ -417,7 +417,7 @@ export class GdmLiveAudio extends LitElement {
 
     const client = google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly',
+      scope: 'https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.events.readonly',
       callback: async (tokenResponse: any) => {
         this.accessToken = tokenResponse.access_token;
         await this.initializeAddon();
@@ -561,6 +561,13 @@ export class GdmLiveAudio extends LitElement {
 
     this.uiWs.onopen = () => {
       console.log('Connected to UI WebSocket');
+      if (this.accessToken) {
+        this.uiWs.send(JSON.stringify({
+          type: 'set_token',
+          token: this.accessToken
+        }));
+        console.log('Sent access token to server');
+      }
     };
 
     this.uiWs.onmessage = (event) => {

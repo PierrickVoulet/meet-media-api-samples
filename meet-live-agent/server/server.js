@@ -25,6 +25,7 @@ let isUiLocked = false;
 let activeResearchController = null;
 let activeGeminiSession = null;
 let waitingForUserRequestResponse = false;
+let userAccessToken = '';
 
 async function broadcastUiUpdate(payload) {
     console.log("Broadcasting UI update:", payload);
@@ -291,7 +292,7 @@ function handleUiConnection(ws) {
                 isUiLocked = true;
                 waitingForUserRequestResponse = true;
                 if (activeGeminiSession) {
-                    console.log("Sending text request to Gemini Live session:", msg.text);
+                    console.log("Sending text request to Gemini Live session via sendRealtimeInput:", msg.text);
                     try {
                         activeGeminiSession.sendRealtimeInput({
                             text: msg.text
@@ -305,6 +306,9 @@ function handleUiConnection(ws) {
             } else if (msg.type === 'unlock_request') {
                 console.log('Received unlock request from UI');
                 isUiLocked = false;
+            } else if (msg.type === 'set_token') {
+                console.log('Received access token from UI');
+                userAccessToken = msg.token;
             }
         } catch (e) {
             console.error("Error handling UI message:", e);
@@ -362,32 +366,15 @@ async function setupGeminiLive(clientWs) {
                     parts: [{
                         text: `You are a helpful assistant acting as an add-on in a Google Meeting. The audio and video streams you receive represent what people in the meeting are saying and showing in real-time.
                         
-You MUST NEVER answer with audio. You should invoke the \`research_topic\` tool in two scenarios:
-1. You receive an explicit text request from the user. You MUST answer this request by calling \`research_topic\` and setting the \`source\` parameter to 'user'.
-2. You proactively identify a NEW, important, and specific topic or question being discussed in the meeting and decide to show more information about it. In this case, set the \`source\` parameter to 'proactive'.
+You MUST NEVER answer with audio.
+When you receive a text request from the user, you MUST interpret it in the context of the meeting and call the \`research_topic\` tool. Set the \`source\` parameter to 'user'.
+When you proactively identify a new, important, and specific topic or question being discussed in the meeting audio/video, you can call \`research_topic\` with that topic. Set the \`source\` parameter to 'proactive'.
 Do NOT trigger research for mundane things, small talk, or greetings.
-Do NOT trigger research for a topic that is substantially similar to what was recently researched. Check the conversation history to avoid redundant or repetitive searches on the same subject or small variations of it.
-For all other conversation, remain passive and do not trigger tool calls.
-                        
-When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure in the \`message\` argument.`
+Remain passive and do not trigger tool calls unless necessary.`
                     }]
                 },
                 tools: [{
                     functionDeclarations: [
-                        {
-                            name: "push_a2ui_card",
-                            description: "Push visual information to the screen using A2UI protocol.",
-                            parameters: {
-                                type: "OBJECT",
-                                properties: {
-                                    message: {
-                                        type: "OBJECT",
-                                        description: "The v0.9 A2UI message object."
-                                    }
-                                },
-                                required: ["message"]
-                            }
-                        },
                         {
                             name: "research_topic",
                             description: "Answer a user request. The topic parameter should be a concise yet accurate summary of what the user asked.",
@@ -531,6 +518,44 @@ When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure
     }
 }
 
+
+async function executeCalendarTool(name, args) {
+    if (!userAccessToken) {
+        console.warn("No access token available for Calendar API.");
+        return { error: "Authentication required" };
+    }
+
+    const url = "https://calendarmcp.googleapis.com/mcp/v1";
+
+    try {
+        console.log(`Calling remote MCP tool directly via POST: ${name}`);
+        const response = await axios.post(url, {
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: {
+                name: name,
+                arguments: args
+            },
+            id: 1
+        }, {
+            headers: {
+                Authorization: `Bearer ${userAccessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        console.log(`Remote MCP tool ${name} response:`, JSON.stringify(response.data).substring(0, 200));
+
+        if (response.data.error) {
+            return { error: response.data.error.message };
+        }
+        return response.data.result.content;
+    } catch (e) {
+        console.error(`Remote MCP tool direct call error for ${name}:`, e.response ? e.response.data : e.message);
+        return { error: e.message };
+    }
+}
+
 async function handleResearchTopic(topic, signal) {
     console.log("Handling research for topic:", topic);
 
@@ -558,9 +583,47 @@ async function handleResearchTopic(topic, signal) {
     ${historyStr}
     ---
     
-    You MUST use the Google Search tool to find the latest information. Do NOT rely on your training data.
-    You MUST output your response as a valid v0.9 A2UI message sequence (array).
-    Do not return any other text outside the JSON.
+    You MUST use the available tools to gather information. 
+    - For general research, use the Google Search tool.
+    - For calendar queries, you MUST use the \`list_events\` or \`get_event\` tool. Do NOT rely on your training data or make up data (hallucinate).
+    You MUST output your response as a valid v0.9 A2UI message sequence (array). Do NOT use Google Workspace Add-on card format or any other format. Do not return any other text outside the JSON.
+    
+    Example of valid A2UI output for calendar events:
+    [
+        {
+            "id": "root",
+            "component": "Column",
+            "children": ["header_row", "event1", "event2"]
+        },
+        {
+            "id": "header_row",
+            "component": "Row",
+            "children": ["icon_cal", "title_text"]
+        },
+        {
+            "id": "icon_cal",
+            "component": "Image",
+            "url": "/public/assets/calendar_today.svg",
+            "width": "24dp",
+            "height": "24dp"
+        },
+        {
+            "id": "title_text",
+            "component": "Text",
+            "text": "**Your Meetings Today**",
+            "weight": "bold"
+        },
+        {
+            "id": "event1",
+            "component": "Text",
+            "text": "10:00 AM - Project Sync"
+        },
+        {
+            "id": "event2",
+            "component": "Text",
+            "text": "1:30 PM - Design Review"
+        }
+    ]
     
     CRITICAL RULES for A2UI generation:
     1. ALL components must be flatly listed in the \`components\` array.
@@ -581,32 +644,125 @@ async function handleResearchTopic(topic, signal) {
        - **Example**: Use a \`Row\` with an \`Image\` (url: \`/public/assets/info.svg\`) and \`Text\` to create labeled sections.
     `;
 
-    const contents = [prompt];
-    videoBuffer.forEach(frame => {
-        contents.push({
-            inlineData: {
-                mimeType: 'image/jpeg',
-                data: frame
-            }
-        });
-    });
+    const contents = [
+        {
+            role: 'user',
+            parts: [
+                { text: prompt },
+                ...videoBuffer.map(frame => ({
+                    inlineData: {
+                        mimeType: 'image/jpeg',
+                        data: frame
+                    }
+                }))
+            ]
+        }
+    ];
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: contents,
-            config: {
-                tools: [{ googleSearch: {} }]
-            }
-        }, { signal });
+        let currentContents = [...contents];
+        let continueLoop = true;
+        let resultText = "";
+        let turnCount = 0;
+        const maxTurns = 5; // Prevent infinite loops
 
-        if (signal && signal.aborted) {
-            console.log("Research task was aborted, ignoring result.");
-            return;
+        while (continueLoop && turnCount < maxTurns) {
+            turnCount++;
+            console.log(`Subagent turn ${turnCount}...`);
+
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: currentContents,
+                config: {
+                    tools: [
+                        { googleSearch: {} },
+                        {
+                            functionDeclarations: [
+                                {
+                                    name: "list_events",
+                                    description: "Lists calendar events in a given calendar satisfying the given conditions.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            calendarId: { type: "STRING", description: "Optional. The calendar ID to list events from." },
+                                            startTime: { type: "STRING", description: "Optional. ISO 8601 timestamp." },
+                                            endTime: { type: "STRING", description: "Optional. ISO 8601 timestamp." }
+                                        }
+                                    }
+                                },
+                                {
+                                    name: "get_event",
+                                    description: "Returns a single event from a given calendar.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            calendarId: { type: "STRING", description: "Optional. The calendar ID to get the event from." },
+                                            eventId: { type: "STRING", description: "Required. The ID of the event to get." }
+                                        },
+                                        required: ["eventId"]
+                                    }
+                                },
+                                {
+                                    name: "no_calendar_tool_needed",
+                                    description: "Call this tool if you can answer the user's request without using any calendar tools.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            reason: { type: "STRING", description: "Reason why no tool was needed." }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    toolConfig: {
+                        ...(turnCount === 1 ? {
+                            functionCallingConfig: {
+                                mode: 'ANY',
+                                allowedFunctionNames: ['list_events', 'get_event', 'no_calendar_tool_needed']
+                            }
+                        } : {}),
+                        includeServerSideToolInvocations: true
+                    }
+                }
+            }, { signal });
+
+            if (signal && signal.aborted) {
+                console.log("Research task was aborted, ignoring result.");
+                return;
+            }
+
+            const parts = response.candidates?.[0]?.content?.parts;
+            const funcCallParts = parts?.filter(p => p.functionCall) || [];
+
+            if (funcCallParts.length > 0) {
+                console.log(`Gemini requested ${funcCallParts.length} tool calls.`);
+
+                const functionResponses = await Promise.all(funcCallParts.map(async (part) => {
+                    const funcCall = part.functionCall;
+                    let result;
+                    if (funcCall.name === "no_calendar_tool_needed") {
+                        console.log("Subagent decided no calendar tool was needed. Reason:", funcCall.args.reason);
+                        result = { status: "acknowledged", message: "Proceed to generate answer." };
+                    } else {
+                        console.log("Executing calendar tool:", funcCall.name);
+                        result = await executeCalendarTool(funcCall.name, funcCall.args);
+                    }
+                    return { functionResponse: { name: funcCall.name, response: { content: result } } };
+                }));
+
+                currentContents.push({ role: 'model', parts: parts });
+                currentContents.push({ role: 'user', parts: functionResponses });
+            } else {
+                resultText = response.text;
+                console.log("Subagent final response:", resultText);
+                continueLoop = false;
+            }
         }
 
-        let resultText = response.text;
-        console.log("Subagent response:", resultText);
+        if (turnCount >= maxTurns) {
+            console.warn("Subagent reached max turns without resolving.");
+        }
 
         if (!resultText) {
             console.error("Subagent returned no text.");
