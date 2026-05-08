@@ -497,8 +497,8 @@ async function handleResearchTopic(topic) {
        - Actively look for public image URLs in the search results (such as company logos, official portraits, or diagrams) and include them in the A2UI content using the \`Image\` component with its \`url\` property.
        - Actively use the following local image asset URLs as icons to make the UI more visually appealing and scannable. Do not just return plain text. Use them to create icons for headers, list items, or status indicators.
          Available assets: search, home, settings, person, delete, info, help, check, close, menu, mail, call, chat, add, remove, star, share, download, upload, edit, visibility, lock, schedule, notifications, warning, error, image, movie, folder, cloud, wifi, account_circle, arrow_forward, arrow_back, chevron_right, chevron_left, thumb_up, thumb_down, visibility_off, lock_open, calendar_today, priority_high, attach_file, music_note, folder_open, cloud_upload, cloud_download, battery_full.
-         Access them via \`/assets/{name}.svg\` (e.g., \`/assets/search.svg\`).
-       - **Example**: Use a \`Row\` with an \`Image\` (url: \`/assets/info.svg\`) and \`Text\` to create labeled sections.
+         Access them via \`/public/assets/{name}.svg\` (e.g., \`/public/assets/search.svg\`).
+       - **Example**: Use a \`Row\` with an \`Image\` (url: \`/public/assets/info.svg\`) and \`Text\` to create labeled sections.
     `;
 
     const contents = [prompt];
@@ -543,22 +543,43 @@ async function handleResearchTopic(topic) {
             const cardData = JSON.parse(cleanedText);
             const components = cardData.components || cardData;
 
-            // Flatten properties if present
-            if (Array.isArray(components)) {
-                components.forEach(comp => {
-                    if (comp.properties) {
-                        console.log(`Flattening properties for component ${comp.id}`);
-                        Object.assign(comp, comp.properties);
-                        delete comp.properties;
-                    }
-                });
+            // Flatten nested components and properties
+            const flattenedComponents = [];
+            const seenIds = new Set();
+
+            function processComponent(comp) {
+                if (!comp || typeof comp !== 'object') return;
+                
+                // Flatten properties if present
+                if (comp.properties) {
+                    Object.assign(comp, comp.properties);
+                    delete comp.properties;
+                }
+
+                if (!seenIds.has(comp.id)) {
+                    flattenedComponents.push(comp);
+                    seenIds.add(comp.id);
+                }
+
+                if (comp.children && Array.isArray(comp.children)) {
+                    comp.children = comp.children.map(child => {
+                        if (typeof child === 'object' && child.id) {
+                            processComponent(child);
+                            return child.id; // Return string ID
+                        }
+                        return child; // Return as is (likely string ID)
+                    });
+                }
             }
 
+            const initialComps = Array.isArray(components) ? components : [components];
+            initialComps.forEach(comp => processComponent(comp));
+
             // Ensure the first component has ID 'root'
-            if (Array.isArray(components) && components.length > 0) {
-                if (components[0].id !== 'root') {
-                    console.log(`Auto-correcting root component ID from ${components[0].id} to root`);
-                    components[0].id = 'root';
+            if (flattenedComponents.length > 0) {
+                if (flattenedComponents[0].id !== 'root') {
+                    console.log(`Auto-correcting root component ID from ${flattenedComponents[0].id} to root`);
+                    flattenedComponents[0].id = 'root';
                 }
             }
 
@@ -574,7 +595,7 @@ async function handleResearchTopic(topic) {
                     version: "v0.9",
                     updateComponents: {
                         surfaceId: topic || "main_surface",
-                        components: components
+                        components: flattenedComponents
                     }
                 }
             ];
