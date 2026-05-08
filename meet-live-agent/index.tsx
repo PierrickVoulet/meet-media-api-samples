@@ -4,6 +4,11 @@ import { meet } from '@googleworkspace/meet-addons';
 import { MeetMediaApiClientImpl } from './internal/meetmediaapiclient_impl';
 import { MeetConnectionState } from './types/enums';
 import { GoogleGenAI, Modality, Session } from '@google/genai';
+import React from 'react';
+import ReactDOM from 'react-dom';
+import { A2uiSurface, basicCatalog, MarkdownContext } from '@a2ui/react/v0_9';
+import { MessageProcessor } from '@a2ui/web_core/v0_9';
+import { renderMarkdown } from '@a2ui/markdown-it';
 
 const CLOUD_PROJECT_NUMBER = process.env.CLOUD_PROJECT_NUMBER;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -15,9 +20,18 @@ export class GdmLiveAudio extends LitElement {
   @state() initialized = false;
   @state() error = '';
   @state() volume = 0;
-  @state() transcript = '';
-  @state() outputTranscript = '';
-  @state() sceneDescription = '';
+  @state() agentStatus = 'idle';
+  @state() currentTopic = '';
+  @state() errorDetails = '';
+  @state() uiReceived = false;
+
+  private processor = new MessageProcessor([basicCatalog]);
+  private createdSurfaces = new Set<string>();
+  private reactRoot: any = null;
+  private uiWs: WebSocket | null = null;
+  private videoWs: WebSocket | null = null;
+  private audioWs: WebSocket | null = null;
+
 
   private meetClient: MeetMediaApiClientImpl | null = null;
   private isAddonInitialized = false;
@@ -34,10 +48,7 @@ export class GdmLiveAudio extends LitElement {
   private session: Session | null = null;
   private workletNode: AudioWorkletNode | null = null;
 
-  private accumulatedInputData: Float32Array | null = null;
-  
-  private accumulatedResponseChunks: Uint8Array[] = [];
-  private responseTranscriptionTimer: number | null = null;
+
   
   private nextStartTime = 0;
   private sources = new Set<AudioBufferSourceNode>();
@@ -57,16 +68,16 @@ export class GdmLiveAudio extends LitElement {
       font-family: sans-serif;
       background: #121212;
       color: white;
-      padding: 10px;
+      padding: 0.625rem;
     }
     button {
-      padding: 15px 30px;
-      font-size: 18px;
+      padding: 0.9375rem 1.875rem;
+      font-size: 1.125rem;
       cursor: pointer;
       background-color: #007bff;
       color: white;
       border: none;
-      border-radius: 5px;
+      border-radius: 0.3125rem;
       transition: background-color 0.3s;
     }
     button:hover {
@@ -77,20 +88,22 @@ export class GdmLiveAudio extends LitElement {
       cursor: not-allowed;
     }
     .message {
-      font-size: 20px;
+      font-size: 1.25rem;
       color: #4caf50;
     }
     .error {
       color: #f44336;
-      margin-top: 10px;
+      margin-top: 0.625rem;
     }
     .volume-bar {
-      width: 200px;
-      height: 20px;
+      width: 100%;
+      max-width: 12.5rem;
+      height: 1.25rem;
       background-color: #333;
-      border-radius: 10px;
+      border-radius: 0.625rem;
       overflow: hidden;
-      margin-top: 20px;
+      margin-top: 1.25rem;
+      box-sizing: border-box;
     }
     .volume-level {
       height: 100%;
@@ -100,24 +113,70 @@ export class GdmLiveAudio extends LitElement {
     .transcript-area {
       width: 95%;
       flex-grow: 1;
-      margin-top: 10px;
+      margin-top: 0.625rem;
       background-color: #222;
       color: #ccc;
       border: 1px solid #444;
-      border-radius: 5px;
-      padding: 10px;
+      border-radius: 0.3125rem;
+      padding: 0.625rem;
       font-family: monospace;
       resize: none;
     }
     .label {
       align-self: flex-start;
       margin-left: 5%;
-      margin-top: 15px;
+      margin-top: 0.9375rem;
       font-weight: bold;
       color: #aaa;
     }
     .hidden-video {
       display: none;
+    }
+    #agent-status-container {
+      margin-top: 0.9375rem;
+      padding: 0.625rem;
+      background: #e8f0fe;
+      border-radius: 0.25rem;
+      color: #1a73e8;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #agent-status-container.thinking {
+      background: #fef7e0;
+      color: #b06000;
+    }
+    #agent-status-container.failed {
+      background: #fce8e6;
+      color: #c5221f;
+    }
+    #ui-container {
+      margin-top: 1.25rem;
+      padding: 0.9375rem;
+      border: 1px solid #dadce0;
+      border-radius: 0.25rem;
+      background-color: #fafafa;
+      min-height: 6.25rem;
+      color: #333;
+      width: 100%;
+      box-sizing: border-box;
+      max-height: 25rem;
+      overflow-y: auto;
+      max-width: 100%;
+    }
+    #ui-container img {
+      max-width: 100%;
+      height: auto;
+    }
+    #ui-container * {
+      max-width: 100%;
+    }
+    #ui-container.hidden {
+      display: none;
+    }
+    #ui-payload {
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
     }
   `;
 
@@ -143,6 +202,29 @@ export class GdmLiveAudio extends LitElement {
 
   firstUpdated() {
     this.initializeSession();
+    this.initializeA2UI();
+  }
+
+  private initializeA2UI() {
+    this.processor.onSurfaceCreated(surface => {
+      console.log('Surface created:', surface.id);
+      this.uiReceived = true;
+      const container = this.shadowRoot?.getElementById('ui-container');
+
+      if (container) {
+        if (!this.reactRoot) {
+          this.reactRoot = ReactDOM.createRoot(container);
+        }
+
+        this.reactRoot.render(
+          React.createElement(
+            MarkdownContext.Provider,
+            { value: renderMarkdown },
+            React.createElement(A2uiSurface, { surface: surface })
+          )
+        );
+      }
+    });
   }
 
   private initializeSession() {
@@ -207,111 +289,18 @@ export class GdmLiveAudio extends LitElement {
 
       this.workletNode.port.onmessage = (e) => {
         const inputData = e.data; // Float32Array
-        
-        // Accumulate for transcription (approx 5 seconds at 16kHz = 80000 samples)
-        if (!this.accumulatedInputData) {
-            this.accumulatedInputData = inputData;
-        } else {
-            const newArray = new Float32Array(this.accumulatedInputData.length + inputData.length);
-            newArray.set(this.accumulatedInputData);
-            newArray.set(inputData, this.accumulatedInputData.length);
-            this.accumulatedInputData = newArray;
-        }
-
-        if (this.accumulatedInputData.length >= 80000) {
-            const dataToTranscribe = this.accumulatedInputData;
-            this.accumulatedInputData = null; // Reset buffer
-            this.transcribeInputAudio(dataToTranscribe);
-        }
 
         const pcmBuffer = this.floatTo16BitPCM(inputData);
-        const base64Data = this.arrayBufferToBase64(pcmBuffer);
         
-        if (this.session) {
-          try {
-            this.session.sendRealtimeInput({
-              audio: {
-                mimeType: "audio/pcm;rate=16000",
-                data: base64Data
-              }
-            });
-            if (Math.random() < 0.01) {
-              console.log("Sent audio chunk to Gemini");
-            }
-          } catch (err) {
-            console.error("Error sending audio to Gemini:", err);
-          }
+        if (this.audioWs && this.audioWs.readyState === WebSocket.OPEN) {
+          this.audioWs.send(pcmBuffer);
         }
       };
 
-      // Initialize Gemini Live session.
-      this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = 'gemini-3.1-flash-live-preview'; // Use the live preview model
-
-      this.session = await this.ai.live.connect({
-        model: model,
-        config: {
-          responseModalities: [Modality.AUDIO],
-        },
-        callbacks: {
-          onopen: () => {
-            console.log("Gemini Live: Session opened.");
-          },
-          onmessage: (message) => {
-            const parts = message.serverContent?.modelTurn?.parts;
-            if (parts) {
-              for (const part of parts) {
-                if (part.inlineData) {
-                  const audio = part.inlineData;
-                  const pcmBytes = this.base64ToUint8Array(audio.data);
-
-                  this.accumulatedResponseChunks.push(pcmBytes);
-                  
-                  if (this.responseTranscriptionTimer) {
-                    clearTimeout(this.responseTranscriptionTimer);
-                  }
-                  this.responseTranscriptionTimer = window.setTimeout(() => {
-                    this.transcribeResponseAudio();
-                  }, 1000);
-
-                  this.nextStartTime = Math.max(
-                    this.nextStartTime,
-                    this.outputAudioContext!.currentTime,
-                  );
-
-                  const audioBuffer = this.outputAudioContext!.createBuffer(1, pcmBytes.length / 2, 24000);
-                  const channelData = audioBuffer.getChannelData(0);
-                  const view = new DataView(pcmBytes.buffer);
-                  for (let i = 0; i < channelData.length; i++) {
-                    channelData[i] = view.getInt16(i * 2, true) / 0x7FFF;
-                  }
-
-                  const source = this.outputAudioContext!.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(this.outputAudioContext!.destination);
-                  source.addEventListener('ended', () => {
-                    this.sources.delete(source);
-                  });
-
-                  source.start(this.nextStartTime);
-                  this.nextStartTime = this.nextStartTime + audioBuffer.duration;
-                  this.sources.add(source);
-                }
-              }
-            }
-            if (Math.random() < 0.01) {
-              console.log("Received message from Gemini:", message);
-            }
-          },
-          onerror: (e) => {
-            console.error("Gemini Live error:", e);
-          },
-          onclose: (e) => {
-            console.log("Gemini Live closed:", e.reason);
-            this.session = null;
-          }
-        }
-      });
+      // Initialize WebSockets to the server instead of direct Gemini connection.
+      this.connectUIWs();
+      this.connectVideoWs();
+      this.connectAudioWs();
 
       // Initialize the Meet Media API client.
       this.meetClient = new MeetMediaApiClientImpl({
@@ -384,6 +373,108 @@ export class GdmLiveAudio extends LitElement {
     }
   }
 
+  private connectUIWs() {
+    const host = window.location.host;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    this.uiWs = new WebSocket(`${protocol}://${host}/ws/ui`);
+
+    this.uiWs.onopen = () => {
+      console.log('Connected to UI WebSocket');
+    };
+
+    this.uiWs.onmessage = (event) => {
+      console.log('Received UI update:', event.data);
+      const data = JSON.parse(event.data);
+
+      if (!Array.isArray(data) && data.type === "agent_status") {
+        this.agentStatus = data.status;
+        if (data.topic) this.currentTopic = data.topic;
+        if (data.error) this.errorDetails = data.error;
+        return;
+      }
+
+      const uiContainerP = this.shadowRoot?.querySelector('#ui-container p') as HTMLElement;
+      const uiPayloadPre = this.shadowRoot?.getElementById('ui-payload') as HTMLElement;
+
+      if (uiContainerP) uiContainerP.style.display = 'none';
+
+      const messages = Array.isArray(data) ? data : [data];
+      const filteredMessages = messages.filter(msg => {
+        if (msg.createSurface) {
+          const id = msg.createSurface.surfaceId;
+          if (this.createdSurfaces.has(id)) {
+            console.log(`Surface ${id} already exists, skipping createSurface message.`);
+            return false;
+          }
+          this.createdSurfaces.add(id);
+        }
+        return true;
+      });
+      this.processor.processMessages(filteredMessages);
+
+      if (uiPayloadPre) uiPayloadPre.innerText = '';
+    };
+
+    this.uiWs.onclose = () => {
+      console.log('Disconnected from UI WebSocket, retrying in 3s...');
+      setTimeout(() => this.connectUIWs(), 3000);
+    };
+  }
+
+  private connectVideoWs() {
+    const host = window.location.host;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    this.videoWs = new WebSocket(`${protocol}://${host}/ws/video`);
+    this.videoWs.onopen = () => console.log('Connected to Video WebSocket');
+    this.videoWs.onclose = () => console.log('Video WebSocket closed');
+  }
+
+  private connectAudioWs() {
+    const host = window.location.host;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    this.audioWs = new WebSocket(`${protocol}://${host}/ws/audio`);
+    this.audioWs.binaryType = 'arraybuffer';
+
+    this.audioWs.onopen = () => {
+      console.log('Connected to Audio WebSocket');
+    };
+
+    this.audioWs.onmessage = (event) => {
+      console.log('Received audio chunk from server, size:', event.data.byteLength);
+      this.handleIncomingAudio(event.data);
+    };
+
+    this.audioWs.onclose = () => {
+      console.log('Disconnected from Audio WebSocket');
+    };
+  }
+
+  private handleIncomingAudio(arrayBuffer: ArrayBuffer) {
+    if (!this.outputAudioContext) return;
+
+    const int16Data = new Int16Array(arrayBuffer);
+    const float32Data = new Float32Array(int16Data.length);
+    for (let i = 0; i < int16Data.length; i++) {
+      float32Data[i] = int16Data[i] / 32768;
+    }
+
+    const buffer = this.outputAudioContext.createBuffer(1, float32Data.length, 24000);
+    buffer.copyToChannel(float32Data, 0);
+
+    const source = this.outputAudioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.outputAudioContext.destination);
+
+    const startTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+    source.start(startTime);
+    this.nextStartTime = startTime + buffer.duration;
+    this.sources.add(source);
+
+    source.onended = () => {
+      this.sources.delete(source);
+    };
+  }
+
   private startVideoProcessing() {
     this.videoIntervalId = window.setInterval(() => {
       this.captureAndProcessFrame();
@@ -391,7 +482,7 @@ export class GdmLiveAudio extends LitElement {
   }
 
   private async captureAndProcessFrame() {
-    if (!this.videoEl || !this.canvasEl || !this.session) return;
+    if (!this.videoEl || !this.canvasEl) return;
 
     const ctx = this.canvasEl.getContext('2d');
     if (!ctx) return;
@@ -402,39 +493,17 @@ export class GdmLiveAudio extends LitElement {
     // Get base64 JPEG
     const base64Data = this.canvasEl.toDataURL('image/jpeg', 0.8).split(',')[1];
 
-    // Send to Gemini Live
-    try {
-      this.session.sendRealtimeInput({
-        video: {
-          mimeType: "image/jpeg",
-          data: base64Data
-        }
-      });
-      console.log("Sent video frame to Gemini Live");
-    } catch (e) {
-      console.error("Error sending video to Gemini Live:", e);
+    // Send to server via WebSocket
+    if (this.videoWs && this.videoWs.readyState === WebSocket.OPEN) {
+      const msg = {
+        type: 'frame',
+        data: base64Data
+      };
+      this.videoWs.send(JSON.stringify(msg));
+      console.log("Sent video frame to server");
     }
 
-    // Send to Description Model
-    if (!this.ai) return;
-    try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: base64Data
-            }
-          },
-          "Describe what is seen in this image in one or two sentences."
-        ]
-      });
-      this.sceneDescription = response.text || 'No description available';
-      console.log("Updated scene description.");
-    } catch (e) {
-      console.error("Failed to get scene description:", e);
-    }
+
   }
 
   private startVolumeAnalysis() {
@@ -453,116 +522,7 @@ export class GdmLiveAudio extends LitElement {
     updateVolume();
   }
 
-  private async transcribeInputAudio(float32Array: Float32Array) {
-    console.log("Transcribing accumulated input audio...");
-    try {
-      const pcmBuffer = this.floatTo16BitPCM(float32Array);
-      const wavBytes = this.addWavHeader(new Uint8Array(pcmBuffer), 16000);
-      const base64Wav = this.arrayBufferToBase64(wavBytes.buffer);
-      
-      if (!this.ai) return;
 
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          {
-            inlineData: {
-              mimeType: 'audio/wav',
-              data: base64Wav
-            }
-          },
-          "Please provide a transcript of this audio. If it is only noise, say 'Noise'."
-        ]
-      });
-
-      const text = response.text || '';
-      this.transcript = (text.trim().toLowerCase() === 'noise' || text.trim().toLowerCase() === 'noise.') ? '' : text;
-    } catch (e) {
-      console.error("Failed to transcribe input audio:", e);
-      this.transcript = 'Failed to transcribe audio.';
-    }
-  }
-
-  private concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-    let totalLength = 0;
-    for (const arr of arrays) {
-      totalLength += arr.length;
-    }
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const arr of arrays) {
-      result.set(arr, offset);
-      offset += arr.length;
-    }
-    return result;
-  }
-
-  private async transcribeResponseAudio() {
-    if (this.accumulatedResponseChunks.length === 0) return;
-    
-    const chunks = this.accumulatedResponseChunks;
-    this.accumulatedResponseChunks = [];
-    this.responseTranscriptionTimer = null;
-    
-    console.log("Transcribing accumulated response audio...");
-    try {
-      const pcmBytes = this.concatenateUint8Arrays(chunks);
-      const wavBytes = this.addWavHeader(pcmBytes, 24000);
-      const base64Wav = this.arrayBufferToBase64(wavBytes.buffer);
-      
-      if (!this.ai) return;
-
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          {
-            inlineData: {
-              mimeType: 'audio/wav',
-              data: base64Wav
-            }
-          },
-          "Please provide a transcript of this audio. If you cannot hear anything, say 'Silence'."
-        ]
-      });
-
-      const text = response.text || '';
-      this.outputTranscript = (text.trim().toLowerCase() === 'silence' || text.trim().toLowerCase() === 'silence.') ? '' : text;
-    } catch (e) {
-      console.error("Failed to transcribe response audio:", e);
-      this.outputTranscript = 'Failed to transcribe response.';
-    }
-  }
-
-  private addWavHeader(pcmData: Uint8Array, sampleRate: number): Uint8Array {
-    const header = new ArrayBuffer(44);
-    const view = new DataView(header);
-
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + pcmData.length, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, pcmData.length, true);
-
-    const wav = new Uint8Array(44 + pcmData.length);
-    wav.set(new Uint8Array(header), 0);
-    wav.set(pcmData, 44);
-
-    return wav;
-  }
 
   private async disconnect() {
     if (this.animationFrameId) {
@@ -581,9 +541,17 @@ export class GdmLiveAudio extends LitElement {
       await this.outputAudioContext.close();
       this.outputAudioContext = null;
     }
-    if (this.session) {
-      this.session.close();
-      this.session = null;
+    if (this.uiWs) {
+      this.uiWs.close();
+      this.uiWs = null;
+    }
+    if (this.videoWs) {
+      this.videoWs.close();
+      this.videoWs = null;
+    }
+    if (this.audioWs) {
+      this.audioWs.close();
+      this.audioWs = null;
     }
     if (this.meetClient) {
       try {
@@ -613,10 +581,7 @@ export class GdmLiveAudio extends LitElement {
     this.connected = false;
     this.connecting = false;
     this.volume = 0;
-    this.transcript = '';
-    this.outputTranscript = '';
-    this.sceneDescription = '';
-    this.accumulatedResponseChunks = [];
+
 
     this.sources.forEach(source => source.stop());
     this.sources.clear();
@@ -666,21 +631,29 @@ export class GdmLiveAudio extends LitElement {
       ${this.connecting ? html`<div>Connecting...</div>` : ''}
       
       ${this.connected ? html`
-        <div class="message">Connected successfully!</div>
-        <div>Volume: ${Math.round(volumePercentage)}%</div>
+
         <div class="volume-bar">
           <div class="volume-level" style="width: ${volumePercentage}%"></div>
         </div>
-        
-        <div class="label">Input Transcript:</div>
-        <textarea class="transcript-area" .value=${this.transcript} readonly placeholder="Input transcription will appear here..."></textarea>
-        
-        <div class="label">Output Transcript:</div>
-        <textarea class="transcript-area" .value=${this.outputTranscript} readonly placeholder="Output transcription will appear here..."></textarea>
 
-        <div class="label">Scene Description:</div>
-        <textarea class="transcript-area" .value=${this.sceneDescription} readonly placeholder="Scene description will appear here..."></textarea>
+        <div id="agent-status-container" class="${this.agentStatus === 'thinking' ? 'thinking' : this.agentStatus === 'failed' ? 'failed' : ''}">
+            ${this.currentTopic ? html`
+                <div id="current-topic-container">
+                    <strong>Last Topic:</strong> <span id="current-topic">${this.currentTopic}</span>
+                </div>
+            ` : ''}
+            <div><strong>Processing Agent Status:</strong> <span id="agent-status">${this.agentStatus}</span></div>
+            ${this.errorDetails ? html`
+                <div id="error-details-container">
+                    <strong>Error:</strong> <span id="error-details">${this.errorDetails}</span>
+                </div>
+            ` : ''}
+        </div>
+        
       ` : ''}
+      
+
+      <div id="ui-container" class="${this.uiReceived ? '' : 'hidden'}"></div>
       
       ${this.error ? html`<div class="error">${this.error}</div>` : ''}
     `;

@@ -13,13 +13,33 @@ const path = require('path');
 const WebSocket = require('ws');
 const { URLSearchParams, URL } = require('url');
 const rateLimit = require('express-rate-limit');
+const { GoogleGenAI, Modality } = require('@google/genai');
 
 const app = express();
+
+// State management for A2UI and Agent
+const uiConnections = [];
+const videoBuffer = [];
+const conversationHistory = [];
+
+async function broadcastUiUpdate(payload) {
+    console.log("Broadcasting UI update:", payload);
+    uiConnections.forEach(ws => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(payload));
+        }
+    });
+}
 const port = process.env.PORT || 3000;
 const externalApiBaseUrl = 'https://generativelanguage.googleapis.com';
 const externalWsBaseUrl = 'wss://generativelanguage.googleapis.com';
 // Support either API key env-var variant
 const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+
+let ai = null;
+if (apiKey) {
+    ai = new GoogleGenAI({ apiKey: apiKey });
+}
 
 const staticPath = path.join(__dirname,'dist');
 const publicPath = path.join(__dirname,'public');
@@ -253,11 +273,332 @@ const server = app.listen(port, () => {
 // Create WebSocket server and attach it to the HTTP server
 const wss = new WebSocket.Server({ noServer: true });
 
+function handleUiConnection(ws) {
+    uiConnections.push(ws);
+    console.log('UI client connected. Total:', uiConnections.length);
+    ws.on('close', () => {
+        const index = uiConnections.indexOf(ws);
+        if (index > -1) uiConnections.splice(index, 1);
+        console.log('UI client disconnected. Total:', uiConnections.length);
+    });
+}
+
+function handleVideoConnection(ws) {
+    console.log('Video client connected');
+    ws.on('message', (message) => {
+        try {
+            const msg = JSON.parse(message);
+            if (msg.type === 'frame') {
+                videoBuffer.push(msg.data);
+                if (videoBuffer.length > 15) videoBuffer.shift();
+            }
+        } catch (e) {
+            console.error("Error in video message:", e);
+        }
+    });
+    ws.on('close', () => console.log('Video client disconnected'));
+}
+
+function handleAudioConnection(ws) {
+    console.log('Audio client connected');
+    setupGeminiLive(ws);
+}
+
+async function setupGeminiLive(clientWs) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    if (!apiKey) {
+        console.error("GEMINI_API_KEY not set in environment.");
+        clientWs.close(1008, "API Key not set");
+        return;
+    }
+
+    if (!ai) {
+        console.error("GoogleGenAI not initialized.");
+        clientWs.close(1011, "AI client not initialized");
+        return;
+    }
+
+    try {
+        const sessionPromise = ai.live.connect({
+            model: 'gemini-3.1-flash-live-preview',
+            config: {
+                responseModalities: [Modality.AUDIO],
+                systemInstruction: {
+                    parts: [{
+                        text: `You are a helpful assistant. You do NOT speak to the user using audio.
+                        
+You MUST NEVER answer with audio. For EVERY new user request, you MUST invoke the \`research_topic\` tool to get the answer and update the UI. Do not rely on your own knowledge or just answer with audio for any requests.
+                        
+When calling \`push_a2ui_card\`, you must provide a valid v0.9 message structure in the \`message\` argument.`
+                    }]
+                },
+                tools: [{
+                    functionDeclarations: [
+                        {
+                            name: "push_a2ui_card",
+                            description: "Push visual information to the screen using A2UI protocol.",
+                            parameters: {
+                                type: "OBJECT",
+                                properties: {
+                                    message: {
+                                        type: "OBJECT",
+                                        description: "The v0.9 A2UI message object."
+                                    }
+                                },
+                                required: ["message"]
+                            }
+                        },
+                        {
+                            name: "research_topic",
+                            description: "Research a topic using a subagent with search capabilities.",
+                            parameters: {
+                                type: "OBJECT",
+                                properties: {
+                                    topic: {
+                                        type: "STRING",
+                                        description: "The topic to research."
+                                    }
+                                },
+                                required: ["topic"]
+                            }
+                        }
+                    ]
+                }]
+            },
+            callbacks: {
+                onopen: () => {
+                    console.log("Connected to Gemini Live API.");
+                },
+                onmessage: async (message) => {
+                    console.log("Received from Gemini:", JSON.stringify(message).substring(0, 200));
+
+                    // Handle serverContent (Audio or Tool Calls)
+                    if (message.serverContent) {
+                        const content = message.serverContent;
+
+                        // Handle user transcription if available (from prototype)
+                        if (content.inputTranscription) {
+                            const transcriptText = content.inputTranscription.text;
+                            console.log(`User transcript: ${transcriptText}`);
+                            conversationHistory.push(`User: ${transcriptText}`);
+                        }
+
+                        // Handle tool calls
+                        if (content.modelTurn?.parts) {
+                            for (const part of content.modelTurn.parts) {
+                                if (part.functionCall) {
+                                    const funcCall = part.functionCall;
+                                    const name = funcCall.name;
+                                    const args = funcCall.args;
+
+                                    console.log(`Gemini requested tool call: ${name} with args:`, args);
+
+                                    if (name === "push_a2ui_card") {
+                                        broadcastUiUpdate(args.message);
+                                    } else if (name === "research_topic") {
+                                        await handleResearchTopic(args.topic);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (message.toolCall) {
+                        const toolCall = message.toolCall;
+                        if (toolCall.functionCalls) {
+                            for (const funcCall of toolCall.functionCalls) {
+                                const name = funcCall.name;
+                                const args = funcCall.args;
+
+                                console.log(`Gemini requested tool call (via toolCall): ${name} with args:`, args);
+
+                                if (name === "push_a2ui_card") {
+                                    broadcastUiUpdate(args.message);
+                                } else if (name === "research_topic") {
+                                    await handleResearchTopic(args.topic);
+                                }
+                            }
+                        }
+                    }
+                },
+                onerror: (e) => console.error("Gemini Live error:", e),
+                onclose: () => console.log("Gemini Live closed")
+            }
+        });
+
+        clientWs.on('message', async (data) => {
+            const session = await sessionPromise;
+            // The client sends raw PCM bytes
+            // We need to base64 encode it and send it to Gemini via session.sendRealtimeInput
+            const base64Data = data.toString('base64');
+            session.sendRealtimeInput({
+                audio: {
+                    mimeType: "audio/pcm;rate=16000",
+                    data: base64Data
+                }
+            });
+        });
+
+        clientWs.on('close', async () => {
+            console.log('Audio client disconnected, closing Gemini session');
+            const session = await sessionPromise;
+            session.close();
+        });
+
+    } catch (e) {
+        console.error("Error setting up Gemini Live:", e);
+        clientWs.close(1011, "Failed to setup Gemini Live");
+    }
+}
+
+async function handleResearchTopic(topic) {
+    console.log("Handling research for topic:", topic);
+
+    if (!ai) {
+        console.error("GoogleGenAI instance not initialized.");
+        broadcastUiUpdate({ type: "agent_status", status: "failed", topic: topic, error: "AI client not initialized" });
+        return;
+    }
+
+    broadcastUiUpdate({ type: "agent_status", status: "thinking", topic: topic });
+
+    const historyStr = conversationHistory.join("\n");
+
+    const prompt = `
+    You are a processing agent. Your task is to answer the user's request or analyze the situation based on the provided context. The current query or topic is: "${topic}".
+    
+    Your goal is to answer the user's request based on the available context (visuals and history) and use search tools to gather more details as needed.
+    
+    CRITICAL INSTRUCTION: In addition to directly answering the user's request, you MUST complement your answer with relevant additional information about the subject. However, you MUST keep all generated text concise and focused, avoiding unnecessary length or detail.
+    
+    Here is the context you have been provided:
+    1. **Visual Context**: A sequence of frames from the user's video stream representing the past 15 seconds. They represent what the user was looking at.
+    2. **Conversation History**: A transcript of the conversation from the beginning of the live discussion:
+    ---
+    ${historyStr}
+    ---
+    
+    You MUST use the Google Search tool to find the latest information. Do NOT rely on your training data.
+    You MUST output your response as a valid v0.9 A2UI message sequence (array).
+    Do not return any other text outside the JSON.
+    
+    CRITICAL RULES for A2UI generation:
+    1. ALL components must be flatly listed in the \`components\` array.
+    2. Do NOT nest component definitions inside \`children\` arrays! The \`children\` array must ONLY contain strings representing the IDs of other components. ALL components must be defined flatly at the top level of the \`components\` array.
+       *INCORRECT*: \`"children": [{ "id": "child1", "component": "Text", "text": "..." }]\`
+       *CORRECT*: \`"children": ["child1"]\` (with \`child1\` defined as a separate object in the main \`components\` list).
+    3. Available components: Column, Row, List, Text, Image, Icon. Do NOT use the \`Card\` component as it is not supported.
+    4. \`Link\` and \`Markdown\` components do NOT exist. Use \`Text\` component instead.
+    5. \`Text\` component supports markdown, so you can use markdown links like \`[Title](URL)\` inside the \`text\` property of a \`Text\` component to render links.
+    6. You MUST include a 'Sources' section at the bottom of your UI, using \`Text\` components with markdown links to list the sources used.
+    7. **Images and Visuals**:
+       - Actively look for public image URLs in the search results (such as company logos, official portraits, or diagrams) and include them in the A2UI content using the \`Image\` component with its \`url\` property.
+       - You can also use the following local asset URLs (SVGs) to enhance the UI layout if relevant:
+         Available assets: search, home, settings, person, delete, info, help, check, close, menu, mail, call, chat, add, remove, star, share, download, upload, edit, visibility, lock, schedule, notifications, warning, error, image, movie, folder, cloud, wifi, account_circle, arrow_forward, arrow_back, chevron_right, chevron_left, thumb_up, thumb_down, visibility_off, lock_open, calendar_today, priority_high, attach_file, music_note, folder_open, cloud_upload, cloud_download, battery_full.
+         Access them via \`/assets/{name}.svg\` (e.g., \`/assets/search.svg\`).
+    `;
+
+    const contents = [prompt];
+    videoBuffer.forEach(frame => {
+        contents.push({
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: frame
+            }
+        });
+    });
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: contents,
+            config: {
+                tools: [{ googleSearch: {} }]
+            }
+        });
+
+        let resultText = response.text;
+        console.log("Subagent response:", resultText);
+
+        if (!resultText) {
+            console.error("Subagent returned no text.");
+            broadcastUiUpdate({ type: "agent_status", status: "failed", topic: topic, error: "Empty response from subagent" });
+            return;
+        }
+
+        // Clean up markdown code blocks if present
+        let cleanedText = resultText.trim();
+        if (cleanedText.startsWith("```json")) {
+            cleanedText = cleanedText.substring(7);
+        }
+        if (cleanedText.endsWith("```")) {
+            cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+        }
+        cleanedText = cleanedText.trim();
+
+        try {
+            const cardData = JSON.parse(cleanedText);
+            const components = cardData.components || cardData;
+
+            // Flatten properties if present
+            if (Array.isArray(components)) {
+                components.forEach(comp => {
+                    if (comp.properties) {
+                        console.log(`Flattening properties for component ${comp.id}`);
+                        Object.assign(comp, comp.properties);
+                        delete comp.properties;
+                    }
+                });
+            }
+
+            // Ensure the first component has ID 'root'
+            if (Array.isArray(components) && components.length > 0) {
+                if (components[0].id !== 'root') {
+                    console.log(`Auto-correcting root component ID from ${components[0].id} to root`);
+                    components[0].id = 'root';
+                }
+            }
+
+            const sequence = [
+                {
+                    version: "v0.9",
+                    createSurface: {
+                        surfaceId: topic || "main_surface",
+                        catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json"
+                    }
+                },
+                {
+                    version: "v0.9",
+                    updateComponents: {
+                        surfaceId: topic || "main_surface",
+                        components: components
+                    }
+                }
+            ];
+            broadcastUiUpdate(sequence);
+            broadcastUiUpdate({ type: "agent_status", status: "idle", topic: "" });
+        } catch (jsonErr) {
+            console.error("Subagent failed to return valid JSON:", cleanedText);
+            broadcastUiUpdate({ type: "agent_status", status: "failed", topic: topic, error: "Invalid JSON returned by subagent" });
+        }
+
+    } catch (err) {
+        console.error("Error in handleResearchTopic:", err);
+        broadcastUiUpdate({ type: "agent_status", status: "failed", topic: topic, error: err.message });
+    }
+}
+
 server.on('upgrade', (request, socket, head) => {
     const requestUrl = new URL(request.url, `http://${request.headers.host}`);
     const pathname = requestUrl.pathname;
 
-    if (pathname.startsWith('/api-proxy/')) {
+    if (pathname === '/ws/ui' || pathname === '/ws/video' || pathname === '/ws/audio') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            if (pathname === '/ws/ui') handleUiConnection(ws);
+            if (pathname === '/ws/video') handleVideoConnection(ws);
+            if (pathname === '/ws/audio') handleAudioConnection(ws);
+        });
+    } else if (pathname.startsWith('/api-proxy/')) {
         if (!apiKey) {
             console.error("WebSocket proxy: API key not configured. Closing connection.");
             socket.destroy();

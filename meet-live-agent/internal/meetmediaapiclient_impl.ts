@@ -406,12 +406,18 @@ export class MeetMediaApiClientImpl implements MeetMediaApiClient {
     return;
   }
 
-  leaveMeeting(): Promise<void> {
+  async leaveMeeting(): Promise<void> {
     if (this.sessionControlChannelHandler) {
-      return this.sessionControlChannelHandler?.leaveSession();
-    } else {
-      throw new Error('You must connect to a meeting before leaving it');
+      try {
+        await this.sessionControlChannelHandler.leaveSession();
+      } catch (e) {
+        console.error('Error sending leave request:', e);
+      }
     }
+    this.peerConnection.close();
+    this.sessionStatusDelegate.set({
+      connectionState: MeetConnectionState.DISCONNECTED,
+    });
   }
 
   // The promise resolving on the request does not mean the layout has been

@@ -19,6 +19,17 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          external: [
+            'react',
+            'react-dom',
+            '@a2ui/react/v0_9',
+            '@a2ui/web_core/v0_9',
+            '@a2ui/markdown-it'
+          ]
+        }
       }
     };
 });
