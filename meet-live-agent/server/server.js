@@ -565,6 +565,17 @@ async function handleResearchTopic(topic) {
                     delete comp.markdown;
                 }
 
+                // Fix unencoded URLs in markdown links
+                if (comp.text) {
+                    comp.text = comp.text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+                        try {
+                            return `[${text}](${encodeURI(url.trim())})`;
+                        } catch (e) {
+                            return match;
+                        }
+                    });
+                }
+
                 // Map 'Icon' with 'url' to 'Image'
                 if (comp.component === 'Icon' && comp.url) {
                     comp.component = 'Image';
