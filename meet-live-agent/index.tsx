@@ -64,6 +64,7 @@ export class GdmLiveAudio extends LitElement {
       align-items: center;
       justify-content: flex-start;
       height: 100%;
+      width: 100%;
       box-sizing: border-box;
       font-family: sans-serif;
       background: #121212;
@@ -161,6 +162,7 @@ export class GdmLiveAudio extends LitElement {
       box-sizing: border-box;
       max-height: 25rem;
       overflow-y: auto;
+      overflow-x: hidden;
       max-width: 100%;
     }
     #ui-container img {
@@ -169,6 +171,9 @@ export class GdmLiveAudio extends LitElement {
     }
     #ui-container * {
       max-width: 100%;
+      box-sizing: border-box;
+      word-wrap: break-word;
+      word-break: break-word;
     }
     #ui-container.hidden {
       display: none;
