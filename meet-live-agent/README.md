@@ -16,7 +16,7 @@ The application consists of a frontend built with Lit web components and a Node.
 
 -   **Real-time Bidirectional Audio**: Speak to Gemini and hear it respond in real-time within the meeting.
 -   **Visual Grounding**: The agent receives video frames from the meeting, allowing it to "see" and comment on what's happening.
--   **Intelligent Research Agent**: Uses a subagent powered by \`gemini-2.5-flash\` and Google Search to answer user requests and generate rich visual content.
+-   **Intelligent Research Agent**: Uses a subagent powered by \`gemini-3-flash-preview\` and Google Search to answer user requests and generate rich visual content.
 -   **Dynamic A2UI Cards**: Renders structured information (Column, Row, Text, Image) dynamically in the Meet side panel.
 -   **Smart Activity Triggering**: The agent only processes requests when addressed with "OK Gemini" or when it proactively identifies an important topic being discussed.
 -   **Visual Enrichment**: Uses local SVG assets as icons to make the UI more scannable and visually appealing.
@@ -72,7 +72,7 @@ Then you need to set the data access for the OAuth:
 
 1.  Navigate to **Data Access**.
 2.  Click **Add or remove scopes**.
-3.  Under **Manually add scopes**, paste the following: `https://www.googleapis.com/auth/meetings.space.readonly https://www.googleapis.com/auth/meetings.conference.media.readonly`
+3.  Under **Manually add scopes**, paste the following: `https://www.googleapis.com/auth/meetings.space.created https://www.googleapis.com/auth/meetings.conference.media.readonly https://www.googleapis.com/auth/meetings.space.readonly https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.events.readonly https://www.googleapis.com/auth/calendar.events`
 4.  Click **Add to table**, **Update** and **Save**.
 
 ### 3. Create OAuth Client
