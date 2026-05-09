@@ -584,6 +584,9 @@ async function handleResearchTopic(topic, signal) {
     You MUST use the available tools to gather information. Do NOT reuse previous tool results from the conversation history if they are not directly relevant to the current query. Always perform a fresh search if you need up-to-date information.
     - For general research, use the Google Search tool.
     - For calendar queries, you MUST use the \`list_events\`, \`get_event\`, \`create_event\`, \`delete_event\`, or \`update_event\` tool. Do NOT rely on your training data or make up data (hallucinate).
+    
+    **Handling Tool Failures**: If a tool call returns an error or indicates that the operation failed (e.g., due to missing permissions, invalid parameters, or API issues), you MUST NOT assume the operation was successful. Your final A2UI response must clearly reflect the failure, describe the error to the user, and avoid generating a UI that implies success (like saying 'Event Scheduled' when creation failed).
+    
     You MUST output your response as a valid v0.9 A2UI message sequence (array). Do NOT use Google Workspace Add-on card format or any other format. Do not return any other text outside the JSON.
     
     Example of valid A2UI output for calendar events:
