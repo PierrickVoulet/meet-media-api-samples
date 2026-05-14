@@ -1,0 +1,30 @@
+{
+  "name": "webmcp-meet-addon",
+  "version": "1.0.0",
+  "description": "UI-Agnostic Google Meet Proactive Shadowing Companion Add-on",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "build:frontend": "vite build",
+    "build:backend": "tsc",
+    "build": "npm run build:frontend && npm run build:backend",
+    "start": "node dist/server.js",
+    "dev:frontend": "vite"
+  },
+  "dependencies": {
+    "@google/genai": "^1.51.0",
+    "@googleworkspace/meet-addons": "^1.2.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lit": "^3.3.0",
+    "puppeteer": "^24.2.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.4",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}

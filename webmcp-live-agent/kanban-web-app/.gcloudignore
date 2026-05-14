@@ -1,0 +1,6 @@
+# gcloud ignore parameters for webmcp-kanban-board subproject
+node_modules/
+dist/
+.git/
+.gitignore
+README.md

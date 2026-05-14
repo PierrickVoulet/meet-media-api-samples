@@ -1,0 +1,22 @@
+{
+  "addOns": {
+    "common": {
+      "name": "WebMCP Proactive Shadowing Companion",
+      "logoUrl": "https://developers.google.com/chat/images/quickstart-app-avatar.png"
+    },
+    "meet": {
+      "web": {
+        "logoUrl": "https://developers.google.com/chat/images/quickstart-app-avatar.png",
+        "addOnOrigins": [
+          "https://YOUR_ADDON_CLOUD_RUN_URL",
+          "https://YOUR_WEBAPP_CLOUD_RUN_URL"
+        ],
+        "sidePanelUrl": "https://YOUR_ADDON_CLOUD_RUN_URL",
+        "darkModeLogoUrl": "https://developers.google.com/chat/images/quickstart-app-avatar.png"
+      }
+    },
+    "httpOptions": {
+      "granularOauthPermissionSupport": "OPT_IN"
+    }
+  }
+}
